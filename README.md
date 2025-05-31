@@ -51,6 +51,7 @@ Check/uncheck the desired preprocessing options:
 - Monitor progress in the status bar
 - Check log messages for real-time updates
 
+### References:
 
 [^1]: https://github.com/crisglav/discover-eeg
 
