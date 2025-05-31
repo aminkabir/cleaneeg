@@ -47,7 +47,7 @@ class MNEPlotWidget(QWidget):
         self.canvas.draw()
 
 
-class EEGProcessingWorker(QThread):
+class CleanEEGWorker(QThread):
     """Worker thread for EEG preprocessing to keep UI responsive"""
     progress_update = pyqtSignal(int)
     status_update = pyqtSignal(str)
@@ -365,13 +365,13 @@ class EEGProcessingWorker(QThread):
                 if file_ext == '.mat':
                     self.status_update.emit(f"Reading custom .mat montage: {montage_identifier}")
                     try:
-                        ch_pos_dict = EEGProcessingWorker._read_mat_locations(montage_identifier)
+                        ch_pos_dict = CleanEEGWorker._read_mat_locations(montage_identifier)
                     except Exception as e_mat:
                         self.status_update.emit(f"Error reading .mat file '{montage_identifier}': {e_mat}")
                 elif file_ext in ['.ced', '.csd']:
                     self.status_update.emit(f"Reading custom {file_ext} montage: {montage_identifier}")
                     try:
-                        ch_pos_dict = EEGProcessingWorker._read_ced_locations(montage_identifier)
+                        ch_pos_dict = CleanEEGWorker._read_ced_locations(montage_identifier)
                     except Exception as e_ced:
                         self.status_update.emit(f"Error reading {file_ext} file '{montage_identifier}': {e_ced}")
                 
@@ -956,7 +956,7 @@ class EEGProcessingWorker(QThread):
                             section=main_section_title, tags=(tag, "error"))
 
 
-class EEGProcessingController(QWidget):
+class CleanEEGController(QWidget):
     """Main controller for the EEG processing application"""
 
     def __init__(self, ui_file: str):
@@ -1350,7 +1350,7 @@ class EEGProcessingController(QWidget):
             raw_for_plot = self.current_raw_for_montage.copy()
 
             # Set EOG channel types for consistent montage application
-            # This logic is similar to _set_montage in EEGProcessingWorker
+            # This logic is similar to _set_montage in CleanEEGWorker
             eog_channels_found = []
             if 'VEOG' in raw_for_plot.ch_names:
                 raw_for_plot.set_channel_types({'VEOG': 'eog'})
@@ -1511,7 +1511,7 @@ class EEGProcessingController(QWidget):
 
         # Create worker thread
         file_path = self.loaded_files[file_idx]
-        self.processing_thread = EEGProcessingWorker(file_path, output_dir, settings)
+        self.processing_thread = CleanEEGWorker(file_path, output_dir, settings)
 
         # Connect signals
         self.processing_thread.status_update.connect(
@@ -1602,9 +1602,9 @@ def main():
     app = QApplication(sys.argv)
 
     # Assuming the UI file is in the same directory
-    ui_file = "cleaneeg_gui.ui"
+    ui_file = "cleaneeg_interface.ui"
 
-    controller = EEGProcessingController(ui_file)
+    controller = CleanEEGController(ui_file)
     controller.setWindowTitle("EEG Processing Application")
     controller.showMaximized()
 
