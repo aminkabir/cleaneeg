@@ -1,3 +1,9 @@
+"""
+CleanEEG - Automated Python-based Resting-State EEG Preprocessing GUI
+
+Author: Amin Kabir
+"""
+
 import sys
 import os
 from pathlib import Path
@@ -1585,7 +1591,7 @@ def main():
     ui_file = "cleaneeg_interface.ui"
 
     controller = CleanEEGController(ui_file)
-    controller.setWindowTitle("EEG Processing Application")
+    controller.setWindowTitle("CleanEEG GUI")
     controller.showMaximized()
 
     sys.exit(app.exec_())
