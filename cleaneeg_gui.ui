@@ -54,9 +54,9 @@
           <property name="geometry">
            <rect>
             <x>0</x>
-            <y>0</y>
-            <width>1121</width>
-            <height>1426</height>
+            <y>-146</y>
+            <width>1093</width>
+            <height>919</height>
            </rect>
           </property>
           <layout class="QGridLayout" name="gridLayout">
@@ -995,7 +995,7 @@ color: rgb(255, 255, 255);</string>
                  </property>
                 </widget>
                </item>
-               <item row="5" column="0">
+               <item row="5" column="0" colspan="2">
                 <widget class="QCheckBox" name="step2_eog_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
@@ -1207,7 +1207,7 @@ color: rgb(255, 255, 255);</string>
        <item>
         <widget class="QLineEdit" name="log_lineedit">
          <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+          <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
            <horstretch>0</horstretch>
            <verstretch>0</verstretch>
           </sizepolicy>
@@ -1356,7 +1356,7 @@ color: rgb(255, 255, 255);</string>
         </item>
        </layout>
       </widget>
-      <widget class="QWidget" name="">
+      <widget class="QWidget" name="layoutWidget">
        <layout class="QVBoxLayout" name="Figure_Layout_Montage"/>
       </widget>
      </widget>
@@ -1367,8 +1367,8 @@ color: rgb(255, 255, 255);</string>
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="FindData_ButtonGroup"/>
   <buttongroup name="Montage_ButtonGroup"/>
   <buttongroup name="LineNoise_ButtonGroup"/>
+  <buttongroup name="FindData_ButtonGroup"/>
  </buttongroups>
 </ui>
