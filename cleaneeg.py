@@ -25,7 +25,6 @@ import warnings
 warnings.filterwarnings('ignore')
 from scipy.io import loadmat
 
-# TODO: The HTML report is not exported!
 
 class MNEPlotWidget(QWidget):
     """Custom widget to embed MNE plots in the GUI"""
@@ -242,7 +241,10 @@ class EEGProcessingWorker(QThread):
 
             # EOG regression (only if checkbox is checked and EOG channels exist)
             if self.settings.get('remove_eog'):
-                common_eog_chs = ['VEOG', 'HEOG', 'EOG01', 'EOG1', 'EOG02', 'EOG2', 'LEOG', 'REOG', 'LO1', 'LO2', 'IO1', 'IO2', 'SO1', 'SO2']
+                common_eog_chs = [
+                    'VEOG', 'HEOG', 'EOG01', 'EOG1', 'EOG02', 'EOG2', 'LEOG', 'REOG',
+                    'LO1', 'LO2', 'IO1', 'IO2', 'SO1', 'SO2'
+                ]
                 eog_ch_names_in_data = []
                 ch_names_lower = [ch.lower() for ch in raw_clean.ch_names]
 
@@ -333,9 +335,11 @@ class EEGProcessingWorker(QThread):
 
     def _set_montage(self, raw: mne.io.Raw, montage_info: str):
         """Set EEG montage"""
-        raw.set_channel_types({'VEOG': 'eog'})
-        raw.set_channel_types({'HEOG': 'eog'})
-
+        # Only set channel types if they exist in the data
+        if 'VEOG' in raw.ch_names:
+            raw.set_channel_types({'VEOG': 'eog'})
+        if 'HEOG' in raw.ch_names:
+            raw.set_channel_types({'HEOG': 'eog'})
         montage_type = self.settings.get('montage_type', 'template')
         montage_identifier = montage_info
         montage_applied_successfully = False
@@ -804,33 +808,82 @@ class EEGProcessingWorker(QThread):
             self._add_psd_plot_to_report(report, raw_processed, "PSD: Final Processed Data", "FinalDataPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Overall PSD Comparison: Before vs. After ---
-            step_counter += 1 # For logical flow, though it's a summary plot
-            report.add_html(f"<h2>Step {step_counter}: Overall PSD Comparison: Before vs. After Processing</h2>", 
-                            title=f"Step{step_counter}_PSDBeforeAfterHeader", 
-                            section=main_section_title, 
+            step_counter += 1  # For logical flow, though it's a summary plot
+            report.add_html(f"<h2>Step {step_counter}: Overall PSD Comparison: Before vs. After Processing</h2>",
+                            title=f"Step{step_counter}_PSDBeforeAfterHeader",
+                            section=main_section_title,
                             tags=("ComparisonPSD", "Header"))
             try:
                 self.status_update.emit("Generating Before vs. After PSD comparison plot...")
-                fig_comp, ax_comp = plt.subplots(figsize=(10, 6))
-                
-                # PSD Before
-                raw_orig.compute_psd(fmin=1, fmax=40, picks='eeg', average=True).plot(ax=ax_comp, average=True, show=False, color='blue', line_alpha=0.7, label='Before Processing')
-                # PSD After
-                raw_processed.compute_psd(fmin=1, fmax=40, picks='eeg', average=True).plot(ax=ax_comp, average=True, show=False, color='red', line_alpha=0.7, label='After Processing')
+                fig_comp, (ax_before, ax_after) = plt.subplots(1, 2, figsize=(14, 6))
 
-                ax_comp.set_title("Average EEG PSD: Before vs. After Processing")
-                ax_comp.set_xlabel("Frequency (Hz)")
-                ax_comp.set_ylabel("Power Spectral Density (dB/Hz)") # MNE default is dB
-                ax_comp.legend()
-                ax_comp.grid(True, which='both', linestyle='--', linewidth=0.5)
-                
-                report.add_figure(fig_comp, title="PSD Comparison: Before vs. After", section=main_section_title, tags=("ComparisonPSD", "Plot"))
-                plt.close(fig_comp)
-                self.status_update.emit("Before vs. After PSD comparison plot added.")
+                # Compute PSDs with error handling
+                try:
+                    # Pick only EEG channels
+                    picks_before = mne.pick_types(raw_orig.info, eeg=True, exclude='bads')
+                    picks_after = mne.pick_types(raw_processed.info, eeg=True, exclude='bads')
+
+                    if len(picks_before) == 0 or len(picks_after) == 0:
+                        raise ValueError("No EEG channels available for PSD comparison")
+
+                    # Compute PSDs
+                    psd_before = raw_orig.compute_psd(fmin=1, fmax=40, picks=picks_before)
+                    psd_after = raw_processed.compute_psd(fmin=1, fmax=40, picks=picks_after)
+
+                    # Get the data from PSD objects - each has its own frequency array
+                    freqs_before = psd_before.freqs
+                    freqs_after = psd_after.freqs
+                    psd_before_data = psd_before.get_data().mean(axis=0)  # Average across channels
+                    psd_after_data = psd_after.get_data().mean(axis=0)
+
+                    # Convert to dB, handling potential zeros/negative values
+                    with np.errstate(divide='ignore', invalid='ignore'):
+                        psd_before_db = 10 * np.log10(psd_before_data + 1e-12)  # Add small value to avoid log(0)
+                        psd_after_db = 10 * np.log10(psd_after_data + 1e-12)
+
+                    # Plot Before Processing PSD with its own frequencies
+                    ax_before.plot(freqs_before, psd_before_db, color='blue', alpha=0.8, linewidth=2)
+                    ax_before.set_title(f"Before Processing (fs={raw_orig.info['sfreq']} Hz)", fontsize=12,
+                                        fontweight='bold')
+                    ax_before.set_xlabel("Frequency (Hz)")
+                    ax_before.set_ylabel("Power Spectral Density (dB/Hz)")
+                    ax_before.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
+                    ax_before.set_xlim(1, 40)
+
+                    # Plot After Processing PSD with its own frequencies
+                    ax_after.plot(freqs_after, psd_after_db, color='red', alpha=0.8, linewidth=2)
+                    ax_after.set_title(f"After Processing (fs={raw_processed.info['sfreq']} Hz)", fontsize=12,
+                                       fontweight='bold')
+                    ax_after.set_xlabel("Frequency (Hz)")
+                    ax_after.set_ylabel("Power Spectral Density (dB/Hz)")
+                    ax_after.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
+                    ax_after.set_xlim(1, 40)
+
+                    # Make y-axis limits the same for both plots for easier comparison
+                    y_min = min(psd_before_db.min(), psd_after_db.min()) - 2
+                    y_max = max(psd_before_db.max(), psd_after_db.max()) + 2
+                    ax_before.set_ylim(y_min, y_max)
+                    ax_after.set_ylim(y_min, y_max)
+
+                    # Add overall title
+                    fig_comp.suptitle("Average EEG Power Spectral Density Comparison", fontsize=14, fontweight='bold')
+
+                    # Adjust layout
+                    fig_comp.tight_layout()
+
+                    report.add_figure(fig_comp, title="PSD Comparison: Before vs. After", section=main_section_title,
+                                      tags=("ComparisonPSD", "Plot"))
+                    plt.close(fig_comp)
+                    self.status_update.emit("Before vs. After PSD comparison plot added.")
+
+                except Exception as e:
+                    plt.close(fig_comp)  # Clean up the figure
+                    raise e
+
             except Exception as e:
                 error_msg = f"Could not generate Before vs. After PSD comparison plot: {e}"
                 self.status_update.emit(error_msg)
-                report.add_html(f"<p style=\'color:red;\'>{error_msg}</p>", 
+                report.add_html(f"<p style=\'color:red;\'>{error_msg}</p>",
                                 title="Comparison PSD Error",
                                 section=main_section_title, tags=("ComparisonPSD", "error"))
 
@@ -888,11 +941,10 @@ class EEGProcessingWorker(QThread):
                                 section=main_section_title, tags=(tag, "info"))
                 return
 
-            fig_psd = psd_plot_raw.compute_psd(fmin=1, fmax=80,
-                                             n_fft=min(2048, int(psd_plot_raw.info['sfreq'])), 
-                                             n_overlap=int(min(2048, int(psd_plot_raw.info['sfreq'])) / 2), 
-                                             picks=eeg_picks, 
-                                             exclude=[]).plot(average=True, show=False) # average=True for a cleaner plot
+            fig_psd = psd_plot_raw.compute_psd(
+                fmin=1, fmax=80, n_fft=min(2048, int(psd_plot_raw.info['sfreq'])),
+                n_overlap=int(min(2048, int(psd_plot_raw.info['sfreq'])) / 2),
+                picks=eeg_picks).plot(show=False)
             report.add_figure(fig_psd, title=title_prefix, section=main_section_title, tags=(tag, "psd"))
             plt.close(fig_psd)
             self.status_update.emit(f"PSD for '{title_prefix}' added to report.")
@@ -1263,7 +1315,6 @@ class EEGProcessingController(QWidget):
 
             self._log(f"Failed to load info for {Path(file_path).name}, montage view cleared.", is_error=True)
 
-
     def _create_montage_plot(self):
         """Create montage plot"""
         if not self.current_raw_for_montage:
@@ -1280,23 +1331,24 @@ class EEGProcessingController(QWidget):
         # Clear existing plot from layout before adding a new one
         for i in reversed(range(self.Figure_Layout_Montage.count())):
             widget = self.Figure_Layout_Montage.itemAt(i).widget()
-            if widget: # Check if widget is not None before calling setParent(None)
+            if widget:  # Check if widget is not None before calling setParent(None)
                 widget.setParent(None)
 
-        # Create plot widget if it doesn't exist
-        if not self.montage_plot_widget:
-            self.montage_plot_widget = MNEPlotWidget(parent=self) # Ensure parent is set
-        
-        self.montage_plot_widget.clear() # Clear any previous figure content
+        # Create plot widget if it doesn't exist or recreate it to ensure proper initialization
+        if self.montage_plot_widget:
+            self.montage_plot_widget.setParent(None)
+            self.montage_plot_widget = None
+
+        self.montage_plot_widget = MNEPlotWidget(parent=self)  # Create fresh widget
 
         # Get selected montage
         montage_name = self.step2_template_montage_combobox.currentText()
-        
+
         try:
             self._log(f"Setting montage: {montage_name} for display.")
-            
+
             raw_for_plot = self.current_raw_for_montage.copy()
-            
+
             # Set EOG channel types for consistent montage application
             # This logic is similar to _set_montage in EEGProcessingWorker
             eog_channels_found = []
@@ -1311,17 +1363,23 @@ class EEGProcessingController(QWidget):
 
             montage = mne.channels.make_standard_montage(montage_name)
             raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
-            
+
+            # Create a fresh figure and axis
+            self.montage_plot_widget.figure.clear()
+            ax = self.montage_plot_widget.figure.add_subplot(111)
+
             # Plot montage
-            ax = self.montage_plot_widget.figure.add_subplot(111) # Ensure only one subplot
             raw_for_plot.plot_sensors(show_names=True,
-                                     show=False, axes=ax, kind='topomap') # Added kind for better display
+                                      show=False, axes=ax, kind='topomap')  # Added kind for better display
             ax.set_title(f"Montage: {montage_name}")
+
+            # Ensure the figure has proper layout
+            self.montage_plot_widget.figure.tight_layout()
             self.montage_plot_widget.canvas.draw()
 
             self.Figure_Layout_Montage.addWidget(self.montage_plot_widget)
             self._log(f"Montage plot displayed using {montage_name}.")
-            
+
         except Exception as e:
             warning_msg = f"Could not set or plot montage {montage_name}: {str(e)}"
             self._log(warning_msg, is_error=True)
@@ -1548,8 +1606,7 @@ def main():
 
     controller = EEGProcessingController(ui_file)
     controller.setWindowTitle("EEG Processing Application")
-    controller.resize(1000, 900)  # Match UI default size
-    controller.show()
+    controller.showMaximized()
 
     sys.exit(app.exec_())
 
