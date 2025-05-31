@@ -51,28 +51,27 @@ Check/uncheck the desired preprocessing options:
 - Monitor progress in the status bar
 - Check log messages for real-time updates
 
-### References:
 
-[^1] https://github.com/crisglav/discover-eeg
+[^1]: https://github.com/crisglav/discover-eeg
 
-[^2] https://mne.tools/stable/generated/mne.io.read_raw.html
+[^2]: https://mne.tools/stable/generated/mne.io.read_raw.html
 
-[^3] https://nbara.github.io/python-meegkit/modules/meegkit.dss.html
+[^3]: https://nbara.github.io/python-meegkit/modules/meegkit.dss.html
 
-[^4] https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.filter
+[^4]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.filter
 
-[^5] https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.resample
+[^5]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.resample
 
-[^6] https://pyprep.readthedocs.io/en/latest/generated/pyprep.NoisyChannels.html
+[^6]: https://pyprep.readthedocs.io/en/latest/generated/pyprep.NoisyChannels.html
 
-[^7] https://mne.tools/stable/generated/mne.preprocessing.EOGRegression.html
+[^7]: https://mne.tools/stable/generated/mne.preprocessing.EOGRegression.html
 
-[^8] https://mne.tools/stable/generated/mne.preprocessing.ICA.html
+[^8]: https://mne.tools/stable/generated/mne.preprocessing.ICA.html
 
-[^9] https://mne.tools/mne-icalabel/stable/index.html
+[^9]: https://mne.tools/mne-icalabel/stable/index.html
 
-[^10] https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
+[^10]: https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
 
-[^11] https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
+[^11]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
 
-[^12] https://mne.tools/stable/generated/mne.export.export_raw.html
+[^12]: https://mne.tools/stable/generated/mne.export.export_raw.html
