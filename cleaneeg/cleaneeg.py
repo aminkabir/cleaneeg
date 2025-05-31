@@ -315,23 +315,14 @@ class CleanEEGWorker(QThread):
             self.processing_error.emit(filename, str(e))
 
     def _load_eeg_data(self, file_path: str) -> mne.io.Raw:
-        """Load EEG data based on file extension"""
-        ext = Path(file_path).suffix.lower()
-
-        if ext == '.vhdr':
-            return mne.io.read_raw_brainvision(file_path, preload=True)
-        elif ext == '.set':
-            return mne.io.read_raw_eeglab(file_path, preload=True)
-        elif ext == '.edf':
-            return mne.io.read_raw_edf(file_path, preload=True)
-        elif ext == '.bdf':
-            return mne.io.read_raw_bdf(file_path, preload=True)
-        elif ext == '.gdf':
-            return mne.io.read_raw_gdf(file_path, preload=True)
-        elif ext == '.cnt':
-            return mne.io.read_raw_cnt(file_path, preload=True)
-        else:
-            raise ValueError(f"Unsupported file format: {ext}")
+        """Load EEG data using automatic format detection"""
+        try:
+            # Use mne.io.read_raw which automatically detects the file format
+            return mne.io.read_raw(file_path, preload=True, verbose='WARNING')
+        except Exception as e:
+            # If automatic detection fails, provide more specific error message
+            ext = Path(file_path).suffix.lower()
+            raise ValueError(f"Failed to load file '{file_path}' with extension '{ext}': {str(e)}")
 
     def _set_montage(self, raw: mne.io.Raw, montage_info: str):
         """Set EEG montage"""
@@ -1203,7 +1194,9 @@ class CleanEEGController(QWidget):
     def _get_file_extensions(self, format_idx: int) -> List[str]:
         """Get file extensions based on selected format"""
         extension_map = {
-            0: ['.vhdr', '.set', '.edf', '.bdf', '.gdf', '.cnt'],  # Auto
+            0: ['.vhdr', '.set', '.edf', '.bdf', '.gdf', '.cnt', '.egi', '.mff',
+                '.nxe', '.eeg', '.dat', '.fif', '.fif.gz', '.raw', '.raw.fif',
+                '.raw.fif.gz'],  # Auto - all supported formats
             1: ['.set'],  # EEGLAB
             2: ['.vhdr'],  # BrainVision
             3: ['.edf'],  # EDF
@@ -1215,6 +1208,7 @@ class CleanEEGController(QWidget):
             9: ['.data'],  # Nicolet
             10: ['.nxe'],  # eXimia
             11: ['.lay', '.dat'],  # Persyst
+            12: ['.fif', '.fif.gz'],  # FIF
         }
         return extension_map.get(format_idx, [])
 
@@ -1268,30 +1262,16 @@ class CleanEEGController(QWidget):
         """Load only the header/info of an EEG file without preloading data."""
         try:
             self._log(f"Loading info from: {Path(file_path).name}...")
-            ext = Path(file_path).suffix.lower()
-            raw = None
-            if ext == '.vhdr':
-                raw = mne.io.read_raw_brainvision(file_path, preload=False)
-            elif ext == '.set':
-                raw = mne.io.read_raw_eeglab(file_path, preload=False)
-            elif ext == '.edf':
-                raw = mne.io.read_raw_edf(file_path, preload=False)
-            elif ext == '.bdf':
-                raw = mne.io.read_raw_bdf(file_path, preload=False)
-            elif ext == '.gdf':
-                raw = mne.io.read_raw_gdf(file_path, preload=False)
-            elif ext == '.cnt':
-                raw = mne.io.read_raw_cnt(file_path, preload=False)
-            # Add other MNE supported formats with preload=False as needed
-            else:
-                raise ValueError(f"Unsupported file format for info loading: {ext}")
-            
+
+            # Use mne.io.read_raw which automatically detects the file format
+            raw = mne.io.read_raw(file_path, preload=False, verbose='WARNING')
+
             self._log(f"Info loaded successfully for {Path(file_path).name}.")
             return raw
+
         except Exception as e:
             error_msg = f"Failed to load info from {Path(file_path).name}: {str(e)}"
             self._log(error_msg, is_error=True)
-            # QMessageBox.critical(self, "Error Loading Info", error_msg) # Maybe too intrusive
             return None
 
     def _load_info_and_display_montage(self, file_path: str):
