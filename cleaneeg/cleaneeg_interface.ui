@@ -56,7 +56,7 @@
             <x>0</x>
             <y>0</y>
             <width>1093</width>
-            <height>921</height>
+            <height>895</height>
            </rect>
           </property>
           <layout class="QGridLayout" name="gridLayout">
@@ -566,7 +566,7 @@ color: rgb(255, 255, 255);</string>
              </item>
              <item>
               <layout class="QGridLayout" name="Preprocessing_GLayout">
-               <item row="9" column="0" colspan="3">
+               <item row="8" column="0" colspan="3">
                 <widget class="QCheckBox" name="step2_interpolation_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
@@ -588,69 +588,6 @@ color: rgb(255, 255, 255);</string>
                  </property>
                  <property name="checked">
                   <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="6" column="0" colspan="3">
-                <widget class="QCheckBox" name="step2_ica_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Independent Component Analysis (ICA)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="5" column="0" colspan="2">
-                <widget class="QCheckBox" name="step2_eog_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>(Optional) Remove EOG Artifacts (Requires EOG Channel)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>false</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="1">
-                <widget class="QLineEdit" name="step2_downsample_lineedit">
-                 <property name="text">
-                  <string>500</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>4</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
                  </property>
                 </widget>
                </item>
@@ -678,6 +615,44 @@ color: rgb(255, 255, 255);</string>
                  </property>
                  <property name="text">
                   <string>Preprocessing Steps</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLineEdit" name="step2_downsample_lineedit">
+                 <property name="text">
+                  <string>500</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>4</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="5" column="0" colspan="3">
+                <widget class="QCheckBox" name="step2_ica_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Independent Component Analysis (ICA)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
                  </property>
                 </widget>
                </item>
@@ -737,7 +712,33 @@ color: rgb(255, 255, 255);</string>
                  </item>
                 </layout>
                </item>
-               <item row="7" column="1">
+               <item row="6" column="0">
+                <widget class="QLabel" name="iclabel_label_2">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>ICA method:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="0">
+                <widget class="QLabel" name="asr_cutoff_label">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>Standard Deviation Threshold:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="6" column="1">
                 <widget class="QComboBox" name="ica_method_combobox">
                  <item>
                   <property name="text">
@@ -756,33 +757,7 @@ color: rgb(255, 255, 255);</string>
                  </item>
                 </widget>
                </item>
-               <item row="12" column="0">
-                <widget class="QLabel" name="asr_cutoff_label">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Standard Deviation Threshold:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="7" column="0">
-                <widget class="QLabel" name="iclabel_label_2">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>ICA method:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="8" column="1">
+               <item row="7" column="1">
                 <layout class="QHBoxLayout" name="horizontalLayout_4">
                  <property name="sizeConstraint">
                   <enum>QLayout::SetDefaultConstraint</enum>
@@ -851,6 +826,70 @@ color: rgb(255, 255, 255);</string>
                  </property>
                 </widget>
                </item>
+               <item row="3" column="0">
+                <widget class="QCheckBox" name="step2_downsample_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Downsample Data (Hz)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="1">
+                <widget class="QLineEdit" name="asr_cutoff_lineedit">
+                 <property name="text">
+                  <string>5</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>2</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="7" column="0">
+                <widget class="QLabel" name="iclabel_label">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>Remove Components Classified as:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="10" column="1">
+                <widget class="QLineEdit" name="asr_calibration_lineedit">
+                 <property name="text">
+                  <string>60</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>3</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
                <item row="1" column="1">
                 <layout class="QHBoxLayout" name="line_HLayout">
                  <item>
@@ -878,19 +917,6 @@ color: rgb(255, 255, 255);</string>
                  </item>
                 </layout>
                </item>
-               <item row="8" column="0">
-                <widget class="QLabel" name="iclabel_label">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Remove Components Classified as:</string>
-                 </property>
-                </widget>
-               </item>
                <item row="2" column="0">
                 <widget class="QCheckBox" name="step2_bp_filter_checkbox">
                  <property name="enabled">
@@ -916,58 +942,7 @@ color: rgb(255, 255, 255);</string>
                  </property>
                 </widget>
                </item>
-               <item row="12" column="1">
-                <widget class="QLineEdit" name="asr_cutoff_lineedit">
-                 <property name="text">
-                  <string>5</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>2</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="1">
-                <widget class="QLineEdit" name="asr_calibration_lineedit">
-                 <property name="text">
-                  <string>60</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>3</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="0">
-                <widget class="QCheckBox" name="step2_downsample_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Downsample Data (Hz)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="10" column="0" colspan="2">
+               <item row="9" column="0" colspan="2">
                 <widget class="QCheckBox" name="step2_asr_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
@@ -992,7 +967,7 @@ color: rgb(255, 255, 255);</string>
                  </property>
                 </widget>
                </item>
-               <item row="11" column="0">
+               <item row="10" column="0">
                 <widget class="QLabel" name="asr_calibration_label">
                  <property name="sizePolicy">
                   <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
@@ -1380,8 +1355,8 @@ color: rgb(255, 255, 255);</string>
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="Montage_ButtonGroup"/>
   <buttongroup name="FindData_ButtonGroup"/>
+  <buttongroup name="Montage_ButtonGroup"/>
   <buttongroup name="LineNoise_ButtonGroup"/>
  </buttongroups>
 </ui>
