@@ -42,9 +42,9 @@ Check/uncheck the desired preprocessing options:
 - **Bad Time Segments Removal (ASR)[^11]**
 
 ### 4. Configure Output
-- Select output format (Auto, BrainVision, EEGLAB, or EDF)
+- Select output format (Auto, BrainVision, EEGLAB, or EDF)[^12]
 - Click "Select Save Location" to choose output directory
-- Check "Export Report" for detailed HTML preprocessing reports[^12]
+- Check "Export Report" for detailed HTML preprocessing reports
 
 ### 5. Run Processing
 - Click "Auto-Clean All Resting-State EEG"
