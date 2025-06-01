@@ -71,8 +71,8 @@ Check/uncheck the desired preprocessing options:
 
 [^9]: https://mne.tools/mne-icalabel/stable/index.html
 
-[^10]: https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
+[^10]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
 
-[^11]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
+[^11]: https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
 
 [^12]: https://mne.tools/stable/generated/mne.export.export_raw.html
