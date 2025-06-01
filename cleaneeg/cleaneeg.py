@@ -21,15 +21,15 @@ from meegkit import dss
 from meegkit.asr import ASR
 from pyprep.find_noisy_channels import NoisyChannels
 import matplotlib
-matplotlib.use('Qt5Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5 import NavigationToolbar2QT
 import warnings
-warnings.filterwarnings('ignore')
 from scipy.io import loadmat
+matplotlib.use('Qt5Agg')
+warnings.filterwarnings('ignore')
 
 
 class MNEPlotWidget(QWidget):
@@ -65,26 +65,11 @@ class CleanEEGWorker(QThread):
         self.file_path = file_path
         self.output_path = output_path
         self.settings = settings
-        self.ica_object = None # To store ICA object if used
+        self.ica_object = None
 
     @staticmethod
     def _read_mat_locations(fname):
-        """Read channel locations from a Brainstorm .mat file.
-
-        Extracts 3D electrode positions from Brainstorm's channel structure,
-        converting to the MNE coordinate system (y, x, z) in meters.
-
-        Args:
-            fname (str): Path to the Brainstorm .mat file
-
-        Returns:
-            dict: Dictionary mapping channel names to 3D positions in meters
-                Format: {'ChannelName': [y, x, z], ...}
-
-        Raises:
-            ValueError: If the file does not contain the expected 'Channel' key
-            IOError: If the file cannot be read
-        """
+        """Read channel locations from a Brainstorm .mat file"""
         mat = loadmat(fname)
         if 'Channel' not in mat:
             raise ValueError('MAT file does not contain "Channel" key.')
@@ -102,22 +87,7 @@ class CleanEEGWorker(QThread):
 
     @staticmethod
     def _read_ced_locations(fname):
-        """Read channel locations from an EEGLAB .ced file.
-
-        Parses a .ced file to extract electrode positions, detecting column layout
-        and converting coordinates to meters if necessary.
-
-        Args:
-            fname (str): Path to the .ced file
-
-        Returns:
-            dict: Dictionary mapping channel names to 3D positions in meters
-                Format: {'ChannelName': np.array([y, x, z]), ...}
-
-        Raises:
-            FileNotFoundError: If the specified file does not exist
-            ValueError: If the file format is invalid or missing required columns
-        """
+        """Read channel locations from an EEGLAB .ced file"""
         ch_pos = {}
         if not os.path.isfile(fname):
             raise FileNotFoundError(f"The file {fname} does not exist.")
@@ -129,8 +99,8 @@ class CleanEEGWorker(QThread):
         if not header_line:
             raise ValueError("The .ced file does not contain a header line.")
         parts = header_line.split('\t')
-        if len(parts) < 4: # Basic check, could be improved if split() is used for space separation too
-            parts = header_line.split() # Try splitting by any whitespace
+        if len(parts) < 4:
+            parts = header_line.split()
         col_map = {col.strip().lower(): idx for idx, col in enumerate(parts)}
         required_columns = ['labels', 'x', 'y', 'z']
         missing_cols = [col for col in required_columns if col not in col_map]
@@ -145,8 +115,8 @@ class CleanEEGWorker(QThread):
             if not line:
                 continue
             parts = line.split('\t')
-            if len(parts) <= max(label_idx, x_idx, y_idx, z_idx): # Check if enough parts for mapped columns
-                parts = line.split() # Try splitting by any whitespace if tab split failed for data line
+            if len(parts) <= max(label_idx, x_idx, y_idx, z_idx):
+                parts = line.split()
             if len(parts) <= max(label_idx, x_idx, y_idx, z_idx):
                 raise ValueError(f"Invalid line in CED file at line {line_num} (not enough columns): {line}")
             label = parts[label_idx].strip()
@@ -156,11 +126,11 @@ class CleanEEGWorker(QThread):
                 z = float(parts[z_idx])
             except ValueError:
                 raise ValueError(f"Invalid numerical values in line {line_num}: {line}")
-            if abs(x) > 0.5 or abs(y) > 0.5 or abs(z) > 0.5: # Heuristic for mm to m conversion
+            if abs(x) > 0.5 or abs(y) > 0.5 or abs(z) > 0.5:
                 x = x / 1000.0
                 y = y / 1000.0
                 z = z / 1000.0
-            ch_pos[label] = np.array([y, x, z]) # Store as [y, x, z] for MNE x,y,z mapping later
+            ch_pos[label] = np.array([y, x, z])
         return ch_pos
 
     def run(self):
@@ -171,15 +141,15 @@ class CleanEEGWorker(QThread):
             # Load the data
             self.progress_update.emit(5)
             raw_eeg = self._load_eeg_data(self.file_path)
-            raw_original_for_report = raw_eeg.copy() # For report generation
-            bads_before_processing = [] # Store initial bad channels if any
+            raw_original_for_report = raw_eeg.copy()
+            bads_before_processing = []
             
             # Initialize progress tracking
             total_steps = sum([
                 self.settings.get('set_montage', False),
                 self.settings.get('apply_downsample', False),
                 self.settings.get('remove_line_noise', False),
-                self.settings.get('apply_highpass', False),
+                self.settings.get('apply_bandpass', False),
                 self.settings.get('detect_bad_channels', False),
                 self.settings.get('remove_eog', False),
                 self.settings.get('apply_ica', False),
@@ -221,7 +191,7 @@ class CleanEEGWorker(QThread):
                 raw_clean = self._remove_line_noise(raw_clean, self.settings['line_freq'])
 
             # High-pass filter (only if checkbox is checked)
-            if self.settings.get('apply_highpass') and self.settings.get('highpass_freq'):
+            if self.settings.get('apply_bandpass') and self.settings.get('highpass_freq'):
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
@@ -236,7 +206,7 @@ class CleanEEGWorker(QThread):
                 self.status_update.emit("Detecting bad channels...")
                 bad_channels = self._detect_bad_channels(raw_clean)
                 raw_clean.info['bads'] = bad_channels
-                bads_before_processing = list(bad_channels) # For report
+                bads_before_processing = list(bad_channels)
 
             # Pick channels
             raw_clean.pick(picks=['eeg', 'eog'])
@@ -282,7 +252,7 @@ class CleanEEGWorker(QThread):
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
                 self.status_update.emit("Running ICA...")
-                raw_clean, self.ica_object = self._apply_ica(raw_clean, self.settings) # Store ICA object
+                raw_clean, self.ica_object = self._apply_ica(raw_clean, self.settings)
 
             # ASR (only if checkbox is checked)
             if self.settings.get('apply_asr'):
@@ -383,30 +353,38 @@ class CleanEEGWorker(QThread):
                         montage_created_from_dict = True
                         self.status_update.emit(f"Applied custom montage from {file_ext} file using make_dig_montage.")
                     except Exception as e_make_dig:
-                        self.status_update.emit(f"Error creating DigMontage from {file_ext} data: {e_make_dig}. Will attempt fallback.")
+                        self.status_update.emit(
+                            f"Error creating DigMontage from {file_ext} data: {e_make_dig}. Will attempt fallback.")
                 
-                if not montage_created_from_dict: # Fallback for other custom types or if .mat/.ced processing failed
-                    self.status_update.emit(f"Attempting fallback: mne.channels.read_custom_montage for: {montage_identifier}")
+                if not montage_created_from_dict:
+                    self.status_update.emit(
+                        f"Attempting fallback: mne.channels.read_custom_montage for: {montage_identifier}")
                     try:
                         montage = mne.channels.read_custom_montage(montage_identifier)
                         raw.set_montage(montage, match_case=False, on_missing='warn')
                         montage_applied_successfully = True
-                        self.status_update.emit(f"Applied custom montage using read_custom_montage for: {montage_identifier}")
+                        self.status_update.emit(
+                            f"Applied custom montage using read_custom_montage for: {montage_identifier}")
                     except Exception as e_read_custom:
-                        self.status_update.emit(f"Fallback read_custom_montage also failed for '{montage_identifier}': {e_read_custom}")
+                        self.status_update.emit(
+                            f"Fallback read_custom_montage also failed for '{montage_identifier}': {e_read_custom}")
             
             else: # Unknown montage type
                 self.status_update.emit(f"Unknown montage type: '{montage_type}'. Montage not applied.")
 
         except Exception as e_set_montage_outer:
-            self.status_update.emit(f"Outer error during montage setting for '{montage_identifier}': {e_set_montage_outer}. Montage may not be applied.")
+            self.status_update.emit(
+                f"Outer error during montage setting for '{montage_identifier}': {e_set_montage_outer}. Montage may not be applied.")
 
         if not montage_applied_successfully:
-             self.status_update.emit(f"Warning: Montage '{montage_identifier}' (type: {montage_type}) could not be fully applied. Processing continues.")
+             self.status_update.emit(
+                 f"Warning: Montage '{montage_identifier}' (type: {montage_type}) could not be fully applied. Processing continues.")
         elif raw.get_montage() is None:
-             self.status_update.emit(f"Warning: Montage was reportedly applied, but raw.get_montage() is still None for '{montage_identifier}'.")
+             self.status_update.emit(
+                 f"Warning: Montage was reportedly applied, but raw.get_montage() is still None for '{montage_identifier}'.")
         else:
-             self.status_update.emit(f"Montage '{montage_identifier}' (type: {montage_type}) successfully set and verified.")
+             self.status_update.emit(
+                 f"Montage '{montage_identifier}' (type: {montage_type}) successfully set and verified.")
 
     def _remove_line_noise(self, raw: mne.io.Raw, line_freq: int) -> mne.io.Raw:
         """Remove line noise using DSS"""
@@ -505,7 +483,7 @@ class CleanEEGWorker(QThread):
         
         target_output_dir.mkdir(parents=True, exist_ok=True)
 
-        base_name = Path(original_filename).stem # original_filename is just the name.stem
+        base_name = Path(original_filename).stem
         output_format = self.settings.get('output_format', 'auto')
         output_file = ""
 
@@ -517,7 +495,7 @@ class CleanEEGWorker(QThread):
             elif original_ext == '.set':
                 output_file = target_output_dir / f"{base_name}_clean.set"
                 raw.export(str(output_file), fmt='eeglab', overwrite=True)
-            else: # Default to EDF for other auto cases or if original_ext is not specifically handled
+            else:
                 output_file = target_output_dir / f"{base_name}_clean.edf"
                 raw.export(str(output_file), fmt='edf', overwrite=True)
         else:
@@ -533,7 +511,7 @@ class CleanEEGWorker(QThread):
 
         return str(output_file)
 
-    def _generate_and_save_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw, 
+    def _generate_and_save_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
                                   bads_detected: List[str], original_filename: str,
                                   input_base_dir_str: Optional[str] = None):
         """Generates and saves an HTML report of the preprocessing steps in a single section."""
@@ -544,29 +522,37 @@ class CleanEEGWorker(QThread):
             report = mne.Report(title=report_title, verbose=False)
 
             main_section_title = "EEG Preprocessing Pipeline"
-            report.add_html(f"<h1>{main_section_title}</h1>", title="Pipeline Header", section=main_section_title, tags=("Pipeline", "Header"))
+            report.add_html(
+                f"<h1>{main_section_title}</h1>", title="Pipeline Header", section=main_section_title,
+                tags=("Pipeline", "Header"))
 
             step_counter = 0
-            temp_raw_for_psd = raw_orig.copy() # Start with original for PSDs
+            temp_raw_for_psd = raw_orig.copy()
 
             # --- Step 0: Original Data ---
             step_counter += 1
-            report.add_html(f"<h2>Step {step_counter}: Original Data</h2>", title=f"Step{step_counter}_OriginalDataHeader", section=main_section_title, tags=("OriginalData", "Header"))
+            report.add_html(
+                f"<h2>Step {step_counter}: Original Data</h2>", title=f"Step{step_counter}_OriginalDataHeader",
+                section=main_section_title, tags=("OriginalData", "Header"))
             if raw_orig.get_montage():
                 fig_sensors_orig = raw_orig.plot_sensors(show_names=True, show=False)
-                report.add_figure(fig_sensors_orig, title="Original Sensor Locations", section=main_section_title, tags=("OriginalData", "montage"))
+                report.add_figure(fig_sensors_orig, title="Original Sensor Locations", section=main_section_title,
+                                  tags=("OriginalData", "montage"))
                 plt.close(fig_sensors_orig)
-            report.add_raw(raw_orig, title="Original Raw Data Snippet", psd=False, tags=("OriginalData", "raw_snippet")) # psd=False here, we add custom PSD
-            self._add_psd_plot_to_report(report, temp_raw_for_psd, "PSD: Original Data", "OriginalDataPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+            report.add_raw(raw_orig, title="Original Raw Data Snippet", psd=False, tags=("OriginalData", "raw_snippet"))
+            self._add_psd_plot_to_report(
+                report, temp_raw_for_psd, "PSD: Original Data", "OriginalDataPSD",
+                main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: Montage Setting (if applied) ---
             if self.settings.get('set_montage') and self.settings.get('montage'):
                 step_counter += 1
                 montage_name = self.settings['montage']
-                report.add_html(f"<h2>Step {step_counter}: Set Montage</h2>"
-                                f"<p>Attempting to apply montage: {montage_name} to the data for consistent PSD reporting. "
-                                f"Effects on data (if any beyond channel locations) will be seen in subsequent PSDs.</p>",
-                                title=f"Step{step_counter}_SetMontage", section=main_section_title, tags=("SetMontage", "info"))
+                report.add_html(
+                    f"<h2>Step {step_counter}: Set Montage</h2>"
+                    f"<p>Attempting to apply montage: {montage_name} to the data for consistent PSD reporting. "
+                    f"Effects on data (if any beyond channel locations) will be seen in subsequent PSDs.</p>",
+                    title=f"Step{step_counter}_SetMontage", section=main_section_title, tags=("SetMontage", "info"))
                 try:
                     # Logic from worker._set_montage adapted for temp_raw_for_psd
                     if 'VEOG' in temp_raw_for_psd.ch_names:
@@ -580,15 +566,21 @@ class CleanEEGWorker(QThread):
                     
                     if temp_raw_for_psd.get_montage():
                         fig_sensors_temp = temp_raw_for_psd.plot_sensors(show_names=True, show=False)
-                        report.add_figure(fig_sensors_temp, title=f"Sensor Locations on Temp Data after setting {montage_name}", section=main_section_title, tags=("SetMontage", "temp_montage_plot"))
+                        report.add_figure(
+                            fig_sensors_temp, title=f"Sensor Locations on Temp Data after setting {montage_name}",
+                            section=main_section_title, tags=("SetMontage", "temp_montage_plot"))
                         plt.close(fig_sensors_temp)
 
                 except Exception as e_montage:
                     err_msg = f"Could not apply montage '{montage_name}' to temporary data for report: {e_montage}"
                     self.status_update.emit(err_msg)
-                    report.add_html(f"<p style=\'color:red;\'>{err_msg}</p>", title="SetMontageError_Report", section=main_section_title, tags=("SetMontage", "error"))
+                    report.add_html(
+                        f"<p style=\'color:red;\'>{err_msg}</p>", title="SetMontageError_Report",
+                        section=main_section_title, tags=("SetMontage", "error"))
                 
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, f"PSD: After Attempting to Set Montage ({montage_name})", f"SetMontagePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, f"PSD: After Attempting to Set Montage ({montage_name})",
+                    f"SetMontagePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: Resampling (if applied) ---
             if self.settings.get('apply_downsample') and self.settings.get('resample_freq'):
@@ -596,9 +588,12 @@ class CleanEEGWorker(QThread):
                 resample_f = self.settings['resample_freq']
                 report.add_html(f"<h2>Step {step_counter}: Resample Data</h2>"
                                 f"<p>Data was resampled to {resample_f} Hz.</p>",
-                                title=f"Step{step_counter}_Resample", section=main_section_title, tags=("Resample", "info"))
-                temp_raw_for_psd.resample(resample_f) # Update temp_raw for subsequent PSD
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, f"PSD: After Resampling to {resample_f} Hz", f"ResamplePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                                title=f"Step{step_counter}_Resample", section=main_section_title,
+                                tags=("Resample", "info"))
+                temp_raw_for_psd.resample(resample_f)
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, f"PSD: After Resampling to {resample_f} Hz", f"ResamplePSD",
+                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: Line Noise Removal (if applied) ---
             if self.settings.get('remove_line_noise'):
@@ -606,69 +601,93 @@ class CleanEEGWorker(QThread):
                 line_f = self.settings['line_freq']
                 report.add_html(f"<h2>Step {step_counter}: Line Noise Removal (DSS)</h2>"
                                 f"<p>Line noise at {line_f} Hz was removed using DSS.</p>",
-                                title=f"Step{step_counter}_LineNoise", section=main_section_title, tags=("LineNoise", "info"))
+                                title=f"Step{step_counter}_LineNoise", section=main_section_title,
+                                tags=("LineNoise", "info"))
                 
                 # Re-apply DSS for PSD on a copy - this is computationally intensive for report
                 # Alternative: use a snapshot of raw_clean from worker if available at this stage
                 # For now, we'll use the temp_raw_for_psd which has accumulated changes
                 data_for_dss = temp_raw_for_psd.get_data()
-                data_after_dss, _ = dss.dss_line(data_for_dss.T, fline=line_f, sfreq=temp_raw_for_psd.info['sfreq'], show=False)
+                data_after_dss, _ = dss.dss_line(
+                    data_for_dss.T, fline=line_f, sfreq=temp_raw_for_psd.info['sfreq'], show=False)
                 temp_raw_for_psd._data = data_after_dss.T
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, f"PSD: After DSS Line Noise ({line_f} Hz) Removal", f"LineNoisePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, f"PSD: After DSS Line Noise ({line_f} Hz) Removal",
+                    f"LineNoisePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
             
             # --- Step: High-pass Filter (if applied) ---
-            if self.settings.get('apply_highpass') and self.settings.get('highpass_freq'):
+            if self.settings.get('apply_bandpass') and self.settings.get('highpass_freq'):
                 step_counter += 1
                 hp_f = self.settings['highpass_freq']
                 report.add_html(f"<h2>Step {step_counter}: High-Pass Filter</h2>"
                                 f"<p>Applied a high-pass filter at {hp_f} Hz.</p>",
-                                title=f"Step{step_counter}_HighPass", section=main_section_title, tags=("HighPass", "info"))
-                temp_raw_for_psd.filter(l_freq=hp_f, h_freq=None, method='fir', fir_window='hamming', fir_design='firwin', phase='zero-double')
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, f"PSD: After High-Pass Filter ({hp_f} Hz)", f"HighPassPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                                title=f"Step{step_counter}_HighPass", section=main_section_title,
+                                tags=("HighPass", "info"))
+                temp_raw_for_psd.filter(
+                    l_freq=hp_f, h_freq=None, method='fir', fir_window='hamming', fir_design='firwin')
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, f"PSD: After High-Pass Filter ({hp_f} Hz)", f"HighPassPSD",
+                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: Bad Channel Detection (if applied) ---
             if self.settings.get('detect_bad_channels'):
                 step_counter += 1
-                report.add_html(f"<h2>Step {step_counter}: Bad Channel Detection (PyPrep)</h2>", title=f"Step{step_counter}_BadChannelsHeader", section=main_section_title, tags=("BadChannels", "Header"))
-                if bads_detected: # bads_detected comes from worker's main processing
-                    report.add_html(f"<p>Detected bad channels (PyPrep): {', '.join(bads_detected)}</p>", 
-                                    title="Detected Bad Channels List", section=main_section_title, tags=("BadChannels", "PyPrepList"))
+                report.add_html(
+                    f"<h2>Step {step_counter}: Bad Channel Detection (PyPrep)</h2>",
+                    title=f"Step{step_counter}_BadChannelsHeader", section=main_section_title,
+                    tags=("BadChannels", "Header"))
+                if bads_detected:
+                    report.add_html(
+                        f"<p>Detected bad channels (PyPrep): {', '.join(bads_detected)}</p>",
+                        title="Detected Bad Channels List", section=main_section_title,
+                        tags=("BadChannels", "PyPrepList"))
                     
                     # Visualize raw data with bad channels marked from original data
-                    temp_raw_with_bads_viz = raw_orig.copy() # Use original for this visualization before filtering etc.
+                    temp_raw_with_bads_viz = raw_orig.copy()
                     temp_raw_with_bads_viz.info['bads'] = bads_detected
-                    if temp_raw_with_bads_viz.get_montage(): # Plot sensors with bads
+                    if temp_raw_with_bads_viz.get_montage():
                         fig_bads_sensors = temp_raw_with_bads_viz.plot_sensors(show_names=True, show=False)
-                        report.add_figure(fig_bads_sensors, title="Sensor Locations with Bad Channels Marked", section=main_section_title, tags=("BadChannels", "BadSensors"))
+                        report.add_figure(
+                            fig_bads_sensors, title="Sensor Locations with Bad Channels Marked",
+                            section=main_section_title, tags=("BadChannels", "BadSensors"))
                         plt.close(fig_bads_sensors)
                     
-                    fig_bads_plot = temp_raw_with_bads_viz.plot(n_channels=min(20, len(raw_orig.ch_names)), duration=10, show=False, scalings='auto')
-                    report.add_figure(fig_bads_plot, title="Original Data Snippet with Bad Channels Marked", section=main_section_title, tags=("BadChannels", "BadTimeseries"))
+                    fig_bads_plot = temp_raw_with_bads_viz.plot(
+                        n_channels=min(20, len(raw_orig.ch_names)), duration=10, show=False, scalings='auto')
+                    report.add_figure(
+                        fig_bads_plot, title="Original Data Snippet with Bad Channels Marked",
+                        section=main_section_title, tags=("BadChannels", "BadTimeseries"))
                     plt.close(fig_bads_plot)
                 else:
-                    report.add_html("<p>No bad channels detected by PyPrep.</p>", title="No Bad Channels", section=main_section_title, tags=("BadChannels", "NoBads"))
+                    report.add_html(
+                        "<p>No bad channels detected by PyPrep.</p>", title="No Bad Channels",
+                        section=main_section_title, tags=("BadChannels", "NoBads"))
                 
                 # Update bads in temp_raw_for_psd for subsequent PSD plots
                 temp_raw_for_psd.info['bads'] = bads_detected 
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, "PSD: After Marking Bad Channels", "BadChannelsPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, "PSD: After Marking Bad Channels", "BadChannelsPSD",
+                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
             
             # At this point, an average reference is typically set. temp_raw_for_psd should reflect this.
             # The worker applies it before EOG/ICA. We'll assume it's applied for subsequent PSDs.
             # If not already average, apply it to temp_raw_for_psd if it makes sense for PSD.
             if not temp_raw_for_psd.info['projs']: # Simple check if an average ref proj might be missing
                  try:
-                    temp_raw_for_psd.set_eeg_reference('average', projection=True) # Apply to temp for PSD
-                    self.status_update.emit(f"Applied average reference to temporary raw for PSD plots (if not already present).")
+                    temp_raw_for_psd.set_eeg_reference('average', projection=True)
+                    self.status_update.emit(
+                        f"Applied average reference to temporary raw for PSD plots (if not already present).")
                  except Exception as e:
                     self.status_update.emit(f"Could not apply average reference to temp raw for PSD: {e}")
 
 
             # --- Step: EOG Regression (if applied) ---
-            if self.settings.get('remove_eog') and ('VEOG' in raw_orig.ch_names or 'HEOG' in raw_orig.ch_names): # Check original raw for EOG chs
+            if self.settings.get('remove_eog') and ('VEOG' in raw_orig.ch_names or 'HEOG' in raw_orig.ch_names):
                 step_counter += 1
                 report.add_html(f"<h2>Step {step_counter}: EOG Regression</h2>"
                                 f"<p>EOG artifacts were regressed out using EOG channels.</p>",
-                                title=f"Step{step_counter}_EOGRegression", section=main_section_title, tags=("EOGRegression", "info"))
+                                title=f"Step{step_counter}_EOGRegression", section=main_section_title,
+                                tags=("EOGRegression", "info"))
                 # Re-apply EOG regression to temp_raw_for_psd
                 try:
                     common_eog_chs = ['VEOG', 'HEOG', 'EOG01', 'EOG1', 'EOG02', 'EOG2', 'LEOG', 'REOG', 'LO1', 'LO2', 'IO1', 'IO2', 'SO1', 'SO2']
@@ -691,66 +710,92 @@ class CleanEEGWorker(QThread):
                     if eog_channels_present:
                         eog_reg = EOGRegression(picks='eeg', picks_artifact='eog')
                         eog_reg.fit(temp_raw_for_psd) # Fit the regressor
-                        temp_raw_for_psd = eog_reg.apply(temp_raw_for_psd, copy=True) # Apply and get a new Raw object
-                        self._add_psd_plot_to_report(report, temp_raw_for_psd, "PSD: After EOG Regression", "EOGRegressionPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                        temp_raw_for_psd = eog_reg.apply(temp_raw_for_psd, copy=True)
+                        self._add_psd_plot_to_report(
+                            report, temp_raw_for_psd, "PSD: After EOG Regression",
+                            "EOGRegressionPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
                     else:
-                        report.add_html("<p>EOG regression selected, but no EOG channels found or corrected. Skipping.</p>", title="EOG Regression Skipped", section=main_section_title, tags=("EOGRegression", "info"))
+                        report.add_html(
+                            "<p>EOG regression selected, but no EOG channels found or corrected. Skipping.</p>",
+                            title="EOG Regression Skipped", section=main_section_title, tags=("EOGRegression", "info"))
                 except Exception as e:
-                    report.add_html(f"<p style=\'color:red;\'>Error applying EOG regression for report PSD: {e}</p>", title="EOG Regression PSD Error", section=main_section_title, tags=("EOGRegression", "error"))
-
+                    report.add_html(
+                        f"<p style=\'color:red;\'>Error applying EOG regression for report PSD: {e}</p>",
+                        title="EOG Regression PSD Error", section=main_section_title, tags=("EOGRegression", "error"))
 
             # --- Step: ICA (if applied) ---
             if self.settings.get('apply_ica') and self.ica_object: # ica_object from worker
                 step_counter += 1
-                report.add_html(f"<h2>Step {step_counter}: Independent Component Analysis (ICA)</h2>", title=f"Step{step_counter}_ICAHeader", section=main_section_title, tags=("ICA", "Header"))
+                report.add_html(
+                    f"<h2>Step {step_counter}: Independent Component Analysis (ICA)</h2>",
+                    title=f"Step{step_counter}_ICAHeader", section=main_section_title, tags=("ICA", "Header"))
                 
                 n_excluded = len(self.ica_object.exclude)
-                report.add_html(f"<p>ICA ({self.settings.get('ica_method', 'fastica')}) was applied. {n_excluded} components were marked for exclusion by ICLabel based on selected criteria.</p>",
+                report.add_html(
+                    f"<p>ICA ({self.settings.get('ica_method', 'fastica')}) was applied. {n_excluded} components were marked for exclusion by ICLabel based on selected criteria.</p>",
                                 title="ICA Status", section=main_section_title, tags=("ICA", "status"))
 
                 if self.ica_object.exclude:
                     try:
                         # Plot component topographies of excluded components
-                        fig_ica_topo = self.ica_object.plot_components(picks=self.ica_object.exclude[:min(15, n_excluded)], show=False) 
+                        fig_ica_topo = self.ica_object.plot_components(
+                            picks=self.ica_object.exclude[:min(15, n_excluded)], show=False)
                         if isinstance(fig_ica_topo, list): # plot_components can return a list of figs
                              for i, fig in enumerate(fig_ica_topo):
-                                report.add_figure(fig, title=f"ICA Excluded Component Topographies (Set {i+1})", section=main_section_title, tags=("ICA", "topomap_excluded"))
+                                report.add_figure(
+                                    fig, title=f"ICA Excluded Component Topographies (Set {i+1})",
+                                    section=main_section_title, tags=("ICA", "topomap_excluded"))
                                 plt.close(fig)
                         else:
-                            report.add_figure(fig_ica_topo, title="ICA Excluded Component Topographies", section=main_section_title, tags=("ICA", "topomap_excluded"))
+                            report.add_figure(
+                                fig_ica_topo, title="ICA Excluded Component Topographies",
+                                section=main_section_title, tags=("ICA", "topomap_excluded"))
                             plt.close(fig_ica_topo)
                     except Exception as e:
                         self.status_update.emit(f"Could not plot ICA component topographies for report: {e}")
-                        report.add_html(f"<p style=\'color:red;\'>Could not plot ICA component topographies: {e}</p>", title="ICA Topography Error", section=main_section_title, tags=("ICA", "error"))
+                        report.add_html(
+                            f"<p style=\'color:red;\'>Could not plot ICA component topographies: {e}</p>",
+                            title="ICA Topography Error", section=main_section_title, tags=("ICA", "error"))
                     
                     # Plot sources of a few excluded components using original data (or a copy at that stage)
                     # For the report, we use raw_orig to show what these components looked like in the less processed data.
                     try:
                         raw_for_ica_sources = raw_orig.copy().load_data() # Use a less processed version for source viz
                         # If ICA was fit on filtered data, filter this copy similarly for plot_sources
-                        if self.settings.get('apply_highpass') and self.settings.get('highpass_freq'):
-                            raw_for_ica_sources.filter(l_freq=self.settings.get('highpass_freq'), h_freq=None)
-                        # MNE recommends applying a temporary low-pass for ICA source plotting if data is noisy
-                        # raw_for_ica_sources.filter(l_freq=None, h_freq=40) 
+                        if self.settings.get('apply_bandpass'):
+                            raw_for_ica_sources.filter(
+                                l_freq=self.settings.get('highpass_freq'), h_freq=self.settings.get('lowpass_freq')
+                            )
 
-                        num_excluded_to_plot = min(len(self.ica_object.exclude), 3) # Plot fewer sources to save space/time
+                        num_excluded_to_plot = min(len(self.ica_object.exclude), 3)
                         if num_excluded_to_plot > 0:
-                            fig_ica_sources = self.ica_object.plot_sources(raw_for_ica_sources, 
-                                                                           picks=self.ica_object.exclude[:num_excluded_to_plot], 
-                                                                           show_scrollbars=False, show=False,
-                                                                           title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components")
-                            report.add_figure(fig_ica_sources, title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components", 
-                                              section=main_section_title, tags=("ICA", "sources_excluded"))
+                            fig_ica_sources = self.ica_object.plot_sources(
+                                raw_for_ica_sources,
+                                picks=self.ica_object.exclude[:num_excluded_to_plot],
+                                show_scrollbars=False, show=False,
+                                title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components"
+                            )
+                            report.add_figure(
+                                fig_ica_sources,
+                                title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components",
+                                section=main_section_title, tags=("ICA", "sources_excluded")
+                            )
                             plt.close(fig_ica_sources)
                     except Exception as e:
                         self.status_update.emit(f"Could not plot ICA sources for report: {e}")
-                        report.add_html(f"<p style=\'color:red;\'>Could not plot ICA sources: {e}</p>", title="ICA Sources Error", section=main_section_title, tags=("ICA", "error"))
+                        report.add_html(
+                            f"<p style=\'color:red;\'>Could not plot ICA sources: {e}</p>",
+                            title="ICA Sources Error", section=main_section_title, tags=("ICA", "error"))
                 else:
-                    report.add_html("<p>No ICA components were excluded.</p>", title="ICA No Exclusions", section=main_section_title, tags=("ICA", "info"))
+                    report.add_html(
+                        "<p>No ICA components were excluded.</p>", title="ICA No Exclusions",
+                        section=main_section_title, tags=("ICA", "info"))
                 
                 # Apply ICA to temp_raw_for_psd
-                temp_raw_for_psd = self.ica_object.apply(temp_raw_for_psd.copy()) # Apply to a copy
-                self._add_psd_plot_to_report(report, temp_raw_for_psd, "PSD: After ICA Application", "ICAPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                temp_raw_for_psd = self.ica_object.apply(temp_raw_for_psd.copy())
+                self._add_psd_plot_to_report(
+                    report, temp_raw_for_psd, "PSD: After ICA Application", "ICAPSD",
+                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: ASR (if applied) ---
             if self.settings.get('apply_asr'):
@@ -761,48 +806,53 @@ class CleanEEGWorker(QThread):
                                 f"ASR attempts to clean data segments with high-amplitude noise exceeding the calibration threshold. "
                                 f"Its effects will be visible in subsequent PSD plots.</p>", 
                                 title=f"Step{step_counter}_ASR", section=main_section_title, tags=("ASR", "status"))
-                # ASR is complex to re-apply just for a PSD. Its effect will be in temp_raw_for_psd if it ran.
-                # The main 'raw_processed' object has ASR applied if it was selected.
-                # We are using raw_processed for the final PSD, so ASR effects will be there.
-                # If ASR was indeed run, temp_raw_for_psd should be updated.
-                # For simplicity here, we assume that if ASR ran in the worker,
-                # the raw_processed object (which we'll use for the final PSD) contains its effects.
-                # To show an intermediate PSD *just after ASR* with the current temp_raw_for_psd,
-                # we would need to ensure temp_raw_for_psd is correctly updated or ASR is re-applied.
-                # Let's assume raw_processed is the reference here for ASR's effect.
-                # So, the PSD *after* ASR will implicitly be shown in the "PSD: After Channel Interpolation" or "PSD: Final Processed Data"
 
             # --- Step: Channel Interpolation (if applied) ---
             # Note: raw_processed has interpolation if it happened. bads_detected are pre-interpolation.
-            if self.settings.get('interpolate_bads') and bads_detected: # Check if interpolation was intended AND bads were found
+            if self.settings.get('interpolate_bads') and bads_detected:
                 step_counter += 1
-                report.add_html(f"<h2>Step {step_counter}: Bad Channel Interpolation</h2>"
-                                f"<p>Bad channels ({', '.join(bads_detected)}) were interpolated using spherical splines.</p>",
-                                title=f"Step{step_counter}_Interpolation", section=main_section_title, tags=("Interpolation", "info"))
+                report.add_html(
+                    f"<h2>Step {step_counter}: Bad Channel Interpolation</h2>"
+                    f"<p>Bad channels ({', '.join(bads_detected)}) were interpolated using spherical splines.</p>",
+                    title=f"Step{step_counter}_Interpolation", section=main_section_title,
+                    tags=("Interpolation", "info"))
                 # temp_raw_for_psd here might not have interpolation if it wasn't the last step.
                 # For the PSD, we should use a version of data that HAS interpolation.
                 # Let's use raw_processed for this PSD as it's the most complete version.
                 # Or, we can try to interpolate temp_raw_for_psd if its bads are set.
-                if temp_raw_for_psd.info['bads']: # If temp_raw has bads set
+                if temp_raw_for_psd.info['bads']:
                     try:
                         # temp_raw_for_psd.interpolate_bads(reset_bads=True, mode='accurate') # Simpler call
                         temp_raw_for_psd.interpolate_bads(reset_bads=True)
-                        self._add_psd_plot_to_report(report, temp_raw_for_psd, "PSD: After Channel Interpolation", "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+                        self._add_psd_plot_to_report(
+                            report, temp_raw_for_psd, "PSD: After Channel Interpolation",
+                            "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
                     except Exception as e:
-                         report.add_html(f"<p style=\'color:red;\'>Error interpolating for report PSD: {e}</p>", title="Interpolation PSD Error", section=main_section_title, tags=("Interpolation", "error"))
-                else: # Otherwise, if raw_processed is available, it should have interpolation.
-                     self._add_psd_plot_to_report(report, raw_processed, "PSD: After Channel Interpolation (from final data)", "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
+                        report.add_html(
+                            f"<p style=\'color:red;\'>Error interpolating for report PSD: {e}</p>",
+                            title="Interpolation PSD Error", section=main_section_title,
+                            tags=("Interpolation", "error"))
+                else:
+                    self._add_psd_plot_to_report(
+                        report, raw_processed, "PSD: After Channel Interpolation (from final data)",
+                        "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Step: Final Processed Data ---
             step_counter += 1
-            report.add_html(f"<h2>Step {step_counter}: Final Processed Data</h2>", title=f"Step{step_counter}_FinalDataHeader", section=main_section_title, tags=("FinalData", "Header"))
-            report.add_raw(raw_processed, title="Final Processed Raw Data Snippet", psd=False, tags=("FinalData", "raw_snippet")) # psd=False, add custom
+            report.add_html(
+                f"<h2>Step {step_counter}: Final Processed Data</h2>", title=f"Step{step_counter}_FinalDataHeader",
+                section=main_section_title, tags=("FinalData", "Header"))
+            report.add_raw(
+                raw_processed, title="Final Processed Raw Data Snippet", psd=False, tags=("FinalData", "raw_snippet"))
             if raw_processed.get_montage():
                 fig_sensors_proc = raw_processed.plot_sensors(show_names=True, show=False)
-                report.add_figure(fig_sensors_proc, title="Final Sensor Locations", section=main_section_title, tags=("FinalData", "montage"))
+                report.add_figure(
+                    fig_sensors_proc, title="Final Sensor Locations", section=main_section_title,
+                    tags=("FinalData", "montage"))
                 plt.close(fig_sensors_proc)
-            self._add_psd_plot_to_report(report, raw_processed, "PSD: Final Processed Data", "FinalDataPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
+            self._add_psd_plot_to_report(
+                report, raw_processed, "PSD: Final Processed Data", "FinalDataPSD",
+                main_section_title, status_update_prefix=f"Step {step_counter}: ")
 
             # --- Overall PSD Comparison: Before vs. After ---
             step_counter += 1  # For logical flow, though it's a summary plot
@@ -899,7 +949,7 @@ class CleanEEGWorker(QThread):
             target_report_dir.mkdir(parents=True, exist_ok=True)
             report_filename = target_report_dir / f"{Path(original_filename).stem}_preprocessing_report.html"
             
-            self.status_update.emit(f"Attempting to save report to: {str(report_filename)}") # Log exact path
+            self.status_update.emit(f"Attempting to save report to: {str(report_filename)}")
             try:
                 report.save(str(report_filename), overwrite=True, open_browser=False)
                 self.status_update.emit(f"Report successfully saved to {report_filename}")
@@ -907,13 +957,13 @@ class CleanEEGWorker(QThread):
             except Exception as e_save:
                 save_err_msg = f"CRITICAL: Failed to save report to {report_filename}. Error: {e_save}"
                 self.status_update.emit(save_err_msg)
-                self.processing_error.emit(original_filename, save_err_msg) # Make this error prominent
+                self.processing_error.emit(original_filename, save_err_msg)
 
         except Exception as e_generate:
             # Catch any other exception during report content generation
             gen_err_msg = f"Error during report content generation for {original_filename}: {e_generate}"
             self.status_update.emit(gen_err_msg)
-            self.processing_error.emit(original_filename, gen_err_msg) # Make this error prominent
+            self.processing_error.emit(original_filename, gen_err_msg)
 
         # return report_generation_successful
 
@@ -960,7 +1010,7 @@ class CleanEEGController(QWidget):
         super().__init__()
         self.ui = uic.loadUi(ui_file, self)
         self.loaded_files = []
-        self.current_raw_for_montage = None  # For displaying montage plot (preload=False)
+        self.current_raw_for_montage = None
         self.processing_thread = None
         self.montage_options = self._get_available_montages()
         self.current_file_index = -1
@@ -975,21 +1025,15 @@ class CleanEEGController(QWidget):
     def _setup_ui(self):
         """Initialize UI elements"""
 
-        # Set default values for preprocessing options
-        self.step2_hp_filter_lineedit.setText('1')
-        self.step2_downsample_lineedit.setText('500')
-        self.asr_cutoff_lineedit.setText('5')
-        self.asr_calibration_lineedit.setText('60')
-
-        # Add validators for numeric inputs
-        # Float validators for frequency inputs
+        # Add validators for numeric inputs (before setting defaults)
         freq_validator = QDoubleValidator(0.1, 999.0, 2)
         self.step2_hp_filter_lineedit.setValidator(freq_validator)
-        
+        self.step2_lp_filter_lineedit.setValidator(freq_validator)
+
         # ASR validators
         asr_cutoff_validator = QDoubleValidator(1.0, 99.0, 1)
         self.asr_cutoff_lineedit.setValidator(asr_cutoff_validator)
-        
+
         asr_calibration_validator = QIntValidator(1, 999)
         self.asr_calibration_lineedit.setValidator(asr_calibration_validator)
 
@@ -1009,9 +1053,15 @@ class CleanEEGController(QWidget):
         if default_montage in self.montage_options:
             idx = self.montage_options.index(default_montage)
             self.step2_template_montage_combobox.setCurrentIndex(idx)
-        
+
         # Clear log line edit
         self.log_lineedit.clear()
+
+    def _restore_default_if_empty(self, line_edit, default_value):
+        """Restore default value if line edit is empty after editing"""
+        if not line_edit.text().strip():  # If empty or only whitespace
+            line_edit.setText(default_value)
+            self._log(f"Restored default value: {default_value}")
 
     def _get_available_montages(self) -> List[str]:
         """Get list of all available MNE montages"""
@@ -1099,7 +1149,7 @@ class CleanEEGController(QWidget):
         self.step2_preprocess_data_button.clicked.connect(self._start_preprocessing)
 
         # Connect preprocessing option checkboxes to enable/disable their inputs
-        self.step2_hp_filter_checkbox.toggled.connect(self._update_preprocessing_options_state)
+        self.step2_bp_filter_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_downsample_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_line_noise_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_ica_checkbox.toggled.connect(self._update_preprocessing_options_state)
@@ -1115,9 +1165,10 @@ class CleanEEGController(QWidget):
 
     def _update_preprocessing_options_state(self):
         """Enable/disable preprocessing options based on checkbox states"""
-        # High-pass filter
-        self.step2_hp_filter_lineedit.setEnabled(self.step2_hp_filter_checkbox.isChecked())
-        
+        # Band-pass filter
+        self.step2_hp_filter_lineedit.setEnabled(self.step2_bp_filter_checkbox.isChecked())
+        self.step2_lp_filter_lineedit.setEnabled(self.step2_bp_filter_checkbox.isChecked())
+
         # Downsample
         self.step2_downsample_lineedit.setEnabled(self.step2_downsample_checkbox.isChecked())
         
@@ -1197,7 +1248,8 @@ class CleanEEGController(QWidget):
         message = f"Loaded {len(files)} EEG files."
         self._log(message)
 
-    def _get_file_extensions(self, format_idx: int) -> List[str]:
+    @staticmethod
+    def _get_file_extensions(format_idx: int) -> List[str]:
         """Get file extensions based on selected format"""
         extension_map = {
             0: ['.vhdr', '.set', '.edf', '.bdf', '.gdf', '.cnt', '.egi', '.mff',
@@ -1218,7 +1270,8 @@ class CleanEEGController(QWidget):
         }
         return extension_map.get(format_idx, [])
 
-    def _find_eeg_files(self, directory: str, extensions: List[str], pattern: str = "") -> List[str]:
+    @staticmethod
+    def _find_eeg_files(directory: str, extensions: List[str], pattern: str = "") -> List[str]:
         """Find EEG files in directory"""
         files = []
         path = Path(directory)
@@ -1287,17 +1340,16 @@ class CleanEEGController(QWidget):
 
         if raw_info_obj:
             self.current_raw_for_montage = raw_info_obj
-            self._create_montage_plot() # This will handle clearing the old plot
-            # self._log("Montage displayed.") # _create_montage_plot can log its own status
+            self._create_montage_plot()
         else:
             self.current_raw_for_montage = None
             # Clear montage plot area if loading failed
             for i in reversed(range(self.Figure_Layout_Montage.count())):
                 widget = self.Figure_Layout_Montage.itemAt(i).widget()
-                if widget: # Check if widget is not None
+                if widget:
                     widget.setParent(None)
             if self.montage_plot_widget:
-                 self.montage_plot_widget.clear() # Clear the figure itself
+                self.montage_plot_widget.clear()
 
             self._log(f"Failed to load info for {Path(file_path).name}, montage view cleared.", is_error=True)
 
@@ -1387,10 +1439,11 @@ class CleanEEGController(QWidget):
         """Validate preprocessing input fields"""
         try:
             # Validate highpass filter frequency
-            if self.step2_hp_filter_checkbox.isChecked():
+            if self.step2_bp_filter_checkbox.isChecked():
                 hp_freq = float(self.step2_hp_filter_lineedit.text())
-                if hp_freq <= 0:
-                    raise ValueError("Highpass frequency must be positive")
+                lp_freq = float(self.step2_lp_filter_lineedit.text())
+                if hp_freq <= 0 or lp_freq <= 0:
+                    raise ValueError("Filter frequency must be positive")
 
             # Validate downsample frequency
             if self.step2_downsample_checkbox.isChecked():
@@ -1441,10 +1494,14 @@ class CleanEEGController(QWidget):
         """Gather all preprocessing settings from UI"""
         settings = {
             'set_montage': True,  # Always try to set montage
-            'apply_highpass': self.step2_hp_filter_checkbox.isChecked(),
-            'highpass_freq': float(self.step2_hp_filter_lineedit.text()) if self.step2_hp_filter_checkbox.isChecked() else None,
+            'apply_bandpass': self.step2_bp_filter_checkbox.isChecked(),
+            'highpass_freq':
+                float(self.step2_hp_filter_lineedit.text()) if self.step2_bp_filter_checkbox.isChecked() else None,
+            'lowpass_freq':
+                float(self.step2_lp_filter_lineedit.text()) if self.step2_bp_filter_checkbox.isChecked() else None,
             'apply_downsample': self.step2_downsample_checkbox.isChecked(),
-            'resample_freq': int(self.step2_downsample_lineedit.text()) if self.step2_downsample_checkbox.isChecked() else None,
+            'resample_freq':
+                int(self.step2_downsample_lineedit.text()) if self.step2_downsample_checkbox.isChecked() else None,
             'remove_line_noise': self.step2_line_noise_checkbox.isChecked(),
             'line_freq': 50 if self.line_50_radio.isChecked() else 60,
             'detect_bad_channels': self.step2_prep_checkbox.isChecked(),
@@ -1459,7 +1516,8 @@ class CleanEEGController(QWidget):
             'asr_cutoff': float(self.asr_cutoff_lineedit.text()) if self.step2_asr_checkbox.isChecked() else 5,
             'interpolate_bads': self.step2_interpolation_checkbox.isChecked(),
             'output_format': self._get_output_format(),
-            'export_report': self.export_report_checkbox.isChecked() if hasattr(self, 'export_report_checkbox') else False,
+            'export_report':
+                self.export_report_checkbox.isChecked() if hasattr(self, 'export_report_checkbox') else False,
             'input_base_dir': self.step1_input_path_lineedit.text()
         }
 
@@ -1524,7 +1582,7 @@ class CleanEEGController(QWidget):
             # self.processed_raw = processed_raw # This attribute is being removed
             # Update filename display (if it exists)
             if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-                 self.vis_figure_compare_filename_lineedit.setText(filename)
+                self.vis_figure_compare_filename_lineedit.setText(filename)
             # Switch to Data Inspection tab - this behavior might need review if tab content changed significantly
             self.new_study_tab_widget.setCurrentIndex(1)
             
@@ -1541,7 +1599,7 @@ class CleanEEGController(QWidget):
         self.preprocess_progressbar.setValue(0)
 
     @pyqtSlot(str)
-    def _on_montage_selection_changed_for_plot(self, montage_name: str): # Renamed from _on_montage_selection_changed
+    def _on_montage_selection_changed_for_plot(self, montage_name: str):
         """Handle montage selection change for the plot."""
         if self.current_raw_for_montage:
             self._log(f"Montage selection changed to: {montage_name}. Replotting.")
@@ -1563,7 +1621,7 @@ class CleanEEGController(QWidget):
                     self.current_file_path = None
                     self.current_file_index = -1
                     self.current_raw_for_montage = None
-                    self._create_montage_plot() # Clears the plot
+                    self._create_montage_plot()
                     if hasattr(self, 'vis_figure_compare_filename_lineedit'):
                         self.vis_figure_compare_filename_lineedit.clear()
             else:
@@ -1579,7 +1637,7 @@ class CleanEEGController(QWidget):
         self.current_file_path = None
         self.current_file_index = -1
         self.current_raw_for_montage = None
-        self._create_montage_plot() # Clears the plot
+        self._create_montage_plot()
         if hasattr(self, 'vis_figure_compare_filename_lineedit'):
             self.vis_figure_compare_filename_lineedit.clear()
 
