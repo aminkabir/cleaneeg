@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QWidget, QFileDialog,
-                             QMessageBox, QListWidgetItem, QLabel, QPushButton)
+                             QMessageBox, QListWidgetItem, QLabel, QPushButton, QVBoxLayout)
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, QObject, QTimer
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5 import uic
@@ -41,7 +41,6 @@ class MNEPlotWidget(QWidget):
         self.toolbar = NavigationToolbar(self.canvas, self)
         
         # Layout
-        from PyQt5.QtWidgets import QVBoxLayout
         layout = QVBoxLayout()
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
@@ -1057,16 +1056,42 @@ class CleanEEGController(QWidget):
         # Clear log line edit
         self.log_lineedit.clear()
 
-    def _restore_default_if_empty(self, line_edit, default_value):
-        """Restore default value if line edit is empty after editing"""
-        if not line_edit.text().strip():  # If empty or only whitespace
+    def _setup_default_restoration(self):
+        """Setup default value restoration for line edits"""
+        self.line_edit_defaults = {
+            self.step2_hp_filter_lineedit: '1',
+            self.step2_lp_filter_lineedit: '100',
+            self.step2_downsample_lineedit: '500',
+            self.asr_cutoff_lineedit: '5',
+            self.asr_calibration_lineedit: '60'
+        }
+
+        for line_edit, default_value in self.line_edit_defaults.items():
             line_edit.setText(default_value)
-            self._log(f"Restored default value: {default_value}")
+            # Connect to both signals for comprehensive coverage
+            line_edit.editingFinished.connect(
+                lambda checked=False, le=line_edit, dv=default_value:
+                self._restore_default_if_empty(le, dv)
+            )
+            line_edit.textChanged.connect(
+                lambda text, le=line_edit, dv=default_value:
+                self._check_empty_and_restore(le, dv, text)
+            )
+
+    @staticmethod
+    def _restore_default_if_empty(line_edit, default_value):
+        """Restore default value if line edit is empty"""
+        if not line_edit.text().strip():
+            line_edit.setText(default_value)
+
+    @staticmethod
+    def _check_empty_and_restore(line_edit, default_value, current_text):
+        """Immediately restore default when text becomes empty"""
+        if not current_text.strip():
+            QTimer.singleShot(0, lambda: line_edit.setText(default_value))
 
     def _get_available_montages(self) -> List[str]:
         """Get list of all available MNE montages"""
-        import mne.channels
-        
         # Get all available standard montages
         montages = []
         
@@ -1154,6 +1179,7 @@ class CleanEEGController(QWidget):
         self.step2_line_noise_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_ica_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_asr_checkbox.toggled.connect(self._update_preprocessing_options_state)
+        self._setup_default_restoration()
         
         # Connect montage selection change
         self.step2_template_montage_combobox.currentTextChanged.connect(self._on_montage_selection_changed_for_plot)
@@ -1254,19 +1280,19 @@ class CleanEEGController(QWidget):
         extension_map = {
             0: ['.vhdr', '.set', '.edf', '.bdf', '.gdf', '.cnt', '.egi', '.mff',
                 '.nxe', '.eeg', '.dat', '.fif', '.fif.gz', '.raw', '.raw.fif',
-                '.raw.fif.gz'],  # Auto - all supported formats
-            1: ['.set'],  # EEGLAB
-            2: ['.vhdr'],  # BrainVision
-            3: ['.edf'],  # EDF
-            4: ['.bdf'],  # BDF
-            5: ['.gdf'],  # GDF
-            6: ['.cnt'],  # CNT
-            7: ['.egi'],  # EGI
-            8: ['.mff'],  # MFF
-            9: ['.data'],  # Nicolet
-            10: ['.nxe'],  # eXimia
-            11: ['.lay', '.dat'],  # Persyst
-            12: ['.fif', '.fif.gz'],  # FIF
+                '.raw.fif.gz'],         # Auto - all supported formats
+            1: ['.set'],                # EEGLAB
+            2: ['.vhdr'],               # BrainVision
+            3: ['.edf'],                # EDF
+            4: ['.bdf'],                # BDF
+            5: ['.gdf'],                # GDF
+            6: ['.cnt'],                # CNT
+            7: ['.egi'],                # EGI
+            8: ['.mff'],                # MFF
+            9: ['.data'],               # Nicolet
+            10: ['.nxe'],               # eXimia
+            11: ['.lay', '.dat'],       # Persyst
+            12: ['.fif', '.fif.gz'],    # FIF
         }
         return extension_map.get(format_idx, [])
 
