@@ -1206,17 +1206,54 @@ class CleanEEGController(QWidget):
 
     @staticmethod
     def _find_eeg_files(directory: str, extensions: List[str], pattern: str = "") -> List[str]:
-        """Find EEG files in directory"""
-        files = []
-        path = Path(directory)
+        """Find EEG files in directory, avoiding duplicates from same dataset"""
+        from fnmatch import fnmatch
+        import os
 
-        for ext in extensions:
-            if pattern:
-                files.extend(path.rglob(f"*{pattern}*{ext}"))
-            else:
-                files.extend(path.rglob(f"*{ext}"))
+        list_path = []
 
-        return [str(f) for f in files]
+        # Convert extensions list to handle "auto" case
+        if '.auto' in extensions or len(extensions) > 5:  # Auto mode has many extensions
+            valid_eeg_formats = [
+                ".vhdr", ".edf", ".bdf", ".gdf", ".cnt", ".egi", ".mff", ".set",
+                ".data", ".nxe", ".lay", ".dat", ".fif", ".fif.gz", ".raw",
+                ".raw.fif", ".raw.fif.gz"
+            ]
+            search_extensions = valid_eeg_formats
+        else:
+            search_extensions = extensions
+
+        # Track processed file stems to avoid BrainVision duplicates
+        processed_stems = set()
+
+        # Search for files
+        for path, subdirs, files in os.walk(directory):
+            for name in files:
+                file_ext = os.path.splitext(name)[1].lower()
+                file_stem = os.path.splitext(name)[0]
+
+                # Check if file matches our criteria
+                if file_ext in search_extensions:
+                    # Apply pattern matching
+                    search_pattern = f"*{pattern}*{file_ext}" if pattern else f"*{file_ext}"
+                    if fnmatch(name, search_pattern):
+
+                        # Skip if we've already processed this dataset
+                        if file_stem in processed_stems:
+                            continue
+
+                        file_path = os.path.join(path, name)
+
+                        # Test if file can be loaded by MNE
+                        try:
+                            mne.io.read_raw(file_path, preload=False, verbose='ERROR')
+                            list_path.append(file_path)
+                            processed_stems.add(file_stem)
+                        except Exception:
+                            # Skip files that can't be loaded
+                            continue
+
+        return list_path
 
     def _update_file_list(self):
         """Update the file list widget"""
