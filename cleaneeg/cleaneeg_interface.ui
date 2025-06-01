@@ -515,8 +515,11 @@ color: rgb(255, 255, 255);</string>
                  <pointsize>14</pointsize>
                 </font>
                </property>
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
+               </property>
                <property name="text">
-                <string>Use Custom Montage</string>
+                <string>Load Custom Montage</string>
                </property>
                <property name="checked">
                 <bool>false</bool>
