@@ -31,18 +31,16 @@ Check/uncheck the desired preprocessing options:
 
 - **Bad Channel Rejection (PREP Pipeline)[^6]**
 
-- **Remove EOG Artifacts[^7] (if EOG channels are available)**
+- **Independent Component Analysis (ICA)[^7]**
 
-- **Independent Component Analysis (ICA)[^8]**
+- **Auto-classify components (ICLabel)[^8]: Muscle, Eye Blink, Heart Beat, Others**
 
-- **Auto-classify components (ICLabel)[^9]: Muscle, Eye Blink, Heart Beat, Others**
+- **Bad Channel Interpolation[^9]**
 
-- **Bad Channel Interpolation[^10]**
-
-- **Bad Time Segments Removal (ASR)[^11]**
+- **Bad Time Segments Removal (ASR)[^10]**
 
 ### 4. Configure Output
-- Select output format (Auto, BrainVision, EEGLAB, or EDF)[^12]
+- Select output format (Auto, BrainVision, EEGLAB, or EDF)[^11]
 - Click "Select Save Location" to choose output directory
 - Check "Export Report" for detailed HTML preprocessing reports
 
@@ -65,14 +63,12 @@ Check/uncheck the desired preprocessing options:
 
 [^6]: https://pyprep.readthedocs.io/en/latest/generated/pyprep.NoisyChannels.html
 
-[^7]: https://mne.tools/stable/generated/mne.preprocessing.EOGRegression.html
+[^7]: https://mne.tools/stable/generated/mne.preprocessing.ICA.html
 
-[^8]: https://mne.tools/stable/generated/mne.preprocessing.ICA.html
+[^8]: https://mne.tools/mne-icalabel/stable/index.html
 
-[^9]: https://mne.tools/mne-icalabel/stable/index.html
+[^9]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
 
-[^10]: https://mne.tools/stable/generated/mne.io.Raw.html#mne.io.Raw.interpolate_bads
+[^10]: https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
 
-[^11]: https://nbara.github.io/python-meegkit/modules/meegkit.asr.html
-
-[^12]: https://mne.tools/stable/generated/mne.export.export_raw.html
+[^11]: https://mne.tools/stable/generated/mne.export.export_raw.html
