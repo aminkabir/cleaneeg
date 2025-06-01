@@ -15,7 +15,7 @@ from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, QObject, QTimer
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5 import uic
 import mne
-from mne.preprocessing import EOGRegression, ICA
+from mne.preprocessing import ICA
 from mne_icalabel import label_components
 from meegkit import dss
 from meegkit.asr import ASR
@@ -150,7 +150,6 @@ class CleanEEGWorker(QThread):
                 self.settings.get('remove_line_noise', False),
                 self.settings.get('apply_bandpass', False),
                 self.settings.get('detect_bad_channels', False),
-                self.settings.get('remove_eog', False),
                 self.settings.get('apply_ica', False),
                 self.settings.get('apply_asr', False),
                 self.settings.get('interpolate_bads', False)
@@ -208,42 +207,11 @@ class CleanEEGWorker(QThread):
                 bads_before_processing = list(bad_channels)
 
             # Pick channels
-            raw_clean.pick(picks=['eeg', 'eog'])
+            raw_clean.pick(picks='eeg')
 
             # Set reference
             raw_clean.set_eeg_reference('average')
             raw_clean.apply_proj()
-
-            # EOG regression (only if checkbox is checked and EOG channels exist)
-            if self.settings.get('remove_eog'):
-                common_eog_chs = [
-                    'VEOG', 'HEOG', 'EOG01', 'EOG1', 'EOG02', 'EOG2', 'LEOG', 'REOG',
-                    'LO1', 'LO2', 'IO1', 'IO2', 'SO1', 'SO2'
-                ]
-                eog_ch_names_in_data = []
-                ch_names_lower = [ch.lower() for ch in raw_clean.ch_names]
-
-                for common_eog_name in common_eog_chs:
-                    if common_eog_name.lower() in ch_names_lower:
-                        # Find the actual channel name with original casing
-                        actual_ch_name = raw_clean.ch_names[ch_names_lower.index(common_eog_name.lower())]
-                        eog_ch_names_in_data.append(actual_ch_name)
-                        # If it's typed as EEG, correct it to EOG
-                        if raw_clean.info['chs'][raw_clean.ch_names.index(actual_ch_name)]['kind'] == mne.io.constants.FIFF.FIFFV_EEG_CH:
-                            self.status_update.emit(f"Correcting channel type for '{actual_ch_name}' from EEG to EOG.")
-                            raw_clean.set_channel_types({actual_ch_name: 'eog'})
-                
-                # Check if any channels are now typed as EOG
-                eog_channels_present = any(raw_clean.get_channel_types(picks=ch) == 'eog' for ch in raw_clean.ch_names)
-
-                if eog_channels_present:
-                    current_step += 1
-                    progress = int((current_step / total_steps) * 95)
-                    self.progress_update.emit(progress)
-                    self.status_update.emit("Applying EOG regression...")
-                    raw_clean = self._apply_eog_regression(raw_clean)
-                else:
-                    self.status_update.emit("EOG regression selected, but no EOG channels found or corrected. Skipping.")
 
             # ICA (only if checkbox is checked)
             if self.settings.get('apply_ica'):
@@ -301,11 +269,6 @@ class CleanEEGWorker(QThread):
 
     def _set_montage(self, raw: mne.io.Raw, montage_info: str):
         """Set EEG montage"""
-        # Only set channel types if they exist in the data
-        if 'VEOG' in raw.ch_names:
-            raw.set_channel_types({'VEOG': 'eog'})
-        if 'HEOG' in raw.ch_names:
-            raw.set_channel_types({'HEOG': 'eog'})
         montage_type = self.settings.get('montage_type', 'template')
         montage_identifier = montage_info
         montage_applied_successfully = False
@@ -407,12 +370,6 @@ class CleanEEGWorker(QThread):
             bad_channels = [str(ch) for ch in nd.get_bads()]
             return bad_channels
         return []
-
-    def _apply_eog_regression(self, raw: mne.io.Raw) -> mne.io.Raw:
-        """Apply EOG regression"""
-        eog_regression = EOGRegression(picks='eeg', picks_artifact='eog')
-        eog_regression.fit(raw)
-        return eog_regression.apply(raw, copy=True)
 
     def _apply_ica(self, raw: mne.io.Raw, settings: Dict[str, Any]) -> mne.io.Raw:
         """Apply ICA and remove artifacts"""
@@ -553,12 +510,6 @@ class CleanEEGWorker(QThread):
                     f"Effects on data (if any beyond channel locations) will be seen in subsequent PSDs.</p>",
                     title=f"Step{step_counter}_SetMontage", section=main_section_title, tags=("SetMontage", "info"))
                 try:
-                    # Logic from worker._set_montage adapted for temp_raw_for_psd
-                    if 'VEOG' in temp_raw_for_psd.ch_names:
-                        temp_raw_for_psd.set_channel_types({'VEOG': 'eog'})
-                    if 'HEOG' in temp_raw_for_psd.ch_names:
-                        temp_raw_for_psd.set_channel_types({'HEOG': 'eog'})
-                    
                     montage_obj = mne.channels.make_standard_montage(montage_name)
                     temp_raw_for_psd.set_montage(montage_obj, match_case=False, on_missing='warn')
                     self.status_update.emit(f"Montage '{montage_name}' set for report's temporary raw data.")
@@ -669,7 +620,7 @@ class CleanEEGWorker(QThread):
                     main_section_title, status_update_prefix=f"Step {step_counter}: ")
             
             # At this point, an average reference is typically set. temp_raw_for_psd should reflect this.
-            # The worker applies it before EOG/ICA. We'll assume it's applied for subsequent PSDs.
+            # The worker applies it before ICA. We'll assume it's applied for subsequent PSDs.
             # If not already average, apply it to temp_raw_for_psd if it makes sense for PSD.
             if not temp_raw_for_psd.info['projs']: # Simple check if an average ref proj might be missing
                  try:
@@ -678,49 +629,6 @@ class CleanEEGWorker(QThread):
                         f"Applied average reference to temporary raw for PSD plots (if not already present).")
                  except Exception as e:
                     self.status_update.emit(f"Could not apply average reference to temp raw for PSD: {e}")
-
-
-            # --- Step: EOG Regression (if applied) ---
-            if self.settings.get('remove_eog') and ('VEOG' in raw_orig.ch_names or 'HEOG' in raw_orig.ch_names):
-                step_counter += 1
-                report.add_html(f"<h2>Step {step_counter}: EOG Regression</h2>"
-                                f"<p>EOG artifacts were regressed out using EOG channels.</p>",
-                                title=f"Step{step_counter}_EOGRegression", section=main_section_title,
-                                tags=("EOGRegression", "info"))
-                # Re-apply EOG regression to temp_raw_for_psd
-                try:
-                    common_eog_chs = ['VEOG', 'HEOG', 'EOG01', 'EOG1', 'EOG02', 'EOG2', 'LEOG', 'REOG', 'LO1', 'LO2', 'IO1', 'IO2', 'SO1', 'SO2']
-                    eog_ch_names_in_data = []
-                    ch_names_lower = [ch.lower() for ch in temp_raw_for_psd.ch_names]
-
-                    for common_eog_name in common_eog_chs:
-                        if common_eog_name.lower() in ch_names_lower:
-                            # Find the actual channel name with original casing
-                            actual_ch_name = temp_raw_for_psd.ch_names[ch_names_lower.index(common_eog_name.lower())]
-                            eog_ch_names_in_data.append(actual_ch_name)
-                            # If it's typed as EEG, correct it to EOG
-                            if temp_raw_for_psd.info['chs'][temp_raw_for_psd.ch_names.index(actual_ch_name)]['kind'] == mne.io.constants.FIFF.FIFFV_EEG_CH:
-                                self.status_update.emit(f"Correcting channel type for '{actual_ch_name}' from EEG to EOG.")
-                                temp_raw_for_psd.set_channel_types({actual_ch_name: 'eog'})
-                
-                    # Check if any channels are now typed as EOG
-                    eog_channels_present = any(temp_raw_for_psd.get_channel_types(picks=ch) == 'eog' for ch in temp_raw_for_psd.ch_names)
-
-                    if eog_channels_present:
-                        eog_reg = EOGRegression(picks='eeg', picks_artifact='eog')
-                        eog_reg.fit(temp_raw_for_psd) # Fit the regressor
-                        temp_raw_for_psd = eog_reg.apply(temp_raw_for_psd, copy=True)
-                        self._add_psd_plot_to_report(
-                            report, temp_raw_for_psd, "PSD: After EOG Regression",
-                            "EOGRegressionPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-                    else:
-                        report.add_html(
-                            "<p>EOG regression selected, but no EOG channels found or corrected. Skipping.</p>",
-                            title="EOG Regression Skipped", section=main_section_title, tags=("EOGRegression", "info"))
-                except Exception as e:
-                    report.add_html(
-                        f"<p style=\'color:red;\'>Error applying EOG regression for report PSD: {e}</p>",
-                        title="EOG Regression PSD Error", section=main_section_title, tags=("EOGRegression", "error"))
 
             # --- Step: ICA (if applied) ---
             if self.settings.get('apply_ica') and self.ica_object: # ica_object from worker
@@ -1412,19 +1320,6 @@ class CleanEEGController(QWidget):
             self._log(f"Setting montage: {montage_name} for display.")
 
             raw_for_plot = self.current_raw_for_montage.copy()
-
-            # Set EOG channel types for consistent montage application
-            # This logic is similar to _set_montage in CleanEEGWorker
-            eog_channels_found = []
-            if 'VEOG' in raw_for_plot.ch_names:
-                raw_for_plot.set_channel_types({'VEOG': 'eog'})
-                eog_channels_found.append('VEOG')
-            if 'HEOG' in raw_for_plot.ch_names:
-                raw_for_plot.set_channel_types({'HEOG': 'eog'})
-                eog_channels_found.append('HEOG')
-            if eog_channels_found:
-                self._log(f"Set EOG types for {eog_channels_found} for montage display.")
-
             montage = mne.channels.make_standard_montage(montage_name)
             raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
 
@@ -1531,7 +1426,6 @@ class CleanEEGController(QWidget):
             'remove_line_noise': self.step2_line_noise_checkbox.isChecked(),
             'line_freq': 50 if self.line_50_radio.isChecked() else 60,
             'detect_bad_channels': self.step2_prep_checkbox.isChecked(),
-            'remove_eog': self.step2_eog_checkbox.isChecked(),
             'apply_ica': self.step2_ica_checkbox.isChecked(),
             'ica_method': self.ica_method_combobox.currentText() if self.step2_ica_checkbox.isChecked() else 'fastica',
             'remove_muscle': self.muscle_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
