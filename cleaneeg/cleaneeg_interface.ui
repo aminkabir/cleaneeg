@@ -54,9 +54,9 @@
           <property name="geometry">
            <rect>
             <x>0</x>
-            <y>-146</y>
+            <y>0</y>
             <width>1093</width>
-            <height>919</height>
+            <height>921</height>
            </rect>
           </property>
           <layout class="QGridLayout" name="gridLayout">
@@ -121,6 +121,9 @@ color: rgb(255, 255, 255);</string>
                 <font>
                  <pointsize>14</pointsize>
                 </font>
+               </property>
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
                </property>
                <property name="text">
                 <string>Select EEG Data Directory for Processing</string>
@@ -398,7 +401,7 @@ color: rgb(255, 255, 255);</string>
                 </font>
                </property>
                <property name="cursor">
-                <cursorShape>ArrowCursor</cursorShape>
+                <cursorShape>PointingHandCursor</cursorShape>
                </property>
                <property name="text">
                 <string>Import Data</string>
@@ -560,60 +563,8 @@ color: rgb(255, 255, 255);</string>
              </item>
              <item>
               <layout class="QGridLayout" name="Preprocessing_GLayout">
-               <item row="12" column="1">
-                <widget class="QLineEdit" name="asr_cutoff_lineedit">
-                 <property name="text">
-                  <string>5</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>2</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="1">
-                <widget class="QLineEdit" name="asr_calibration_lineedit">
-                 <property name="text">
-                  <string>60</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>3</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="2">
-                <widget class="QLabel" name="label_3">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Sec</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="11" column="0">
-                <widget class="QLabel" name="asr_calibration_label">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Calibration Data:</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="0">
-                <widget class="QCheckBox" name="step2_downsample_checkbox">
+               <item row="9" column="0" colspan="3">
+                <widget class="QCheckBox" name="step2_interpolation_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
                  </property>
@@ -630,139 +581,12 @@ color: rgb(255, 255, 255);</string>
                   </font>
                  </property>
                  <property name="text">
-                  <string>Downsample Data</string>
+                  <string>Bad Channel Interpolation</string>
                  </property>
                  <property name="checked">
                   <bool>true</bool>
                  </property>
                 </widget>
-               </item>
-               <item row="10" column="0" colspan="2">
-                <widget class="QCheckBox" name="step2_asr_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Bad Time Segments Removal (Artifact Subspace Reconstruction)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="0">
-                <widget class="QCheckBox" name="step2_line_noise_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Line Noise Removal (Denoising Source Separation)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="2" column="0">
-                <widget class="QCheckBox" name="step2_hp_filter_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Highpass Filter</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="4" column="0" colspan="3">
-                <widget class="QCheckBox" name="step2_prep_checkbox">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="text">
-                  <string>Bad Channel Rejection (PREP Pipeline)</string>
-                 </property>
-                 <property name="checked">
-                  <bool>true</bool>
-                 </property>
-                </widget>
-               </item>
-               <item row="1" column="1">
-                <layout class="QHBoxLayout" name="horizontalLayout">
-                 <item>
-                  <widget class="QRadioButton" name="line_50_radio">
-                   <property name="text">
-                    <string>50 Hz</string>
-                   </property>
-                   <attribute name="buttonGroup">
-                    <string notr="true">LineNoise_ButtonGroup</string>
-                   </attribute>
-                  </widget>
-                 </item>
-                 <item>
-                  <widget class="QRadioButton" name="line_60_radio">
-                   <property name="text">
-                    <string>60 Hz</string>
-                   </property>
-                   <property name="checked">
-                    <bool>true</bool>
-                   </property>
-                   <attribute name="buttonGroup">
-                    <string notr="true">LineNoise_ButtonGroup</string>
-                   </attribute>
-                  </widget>
-                 </item>
-                </layout>
                </item>
                <item row="6" column="0" colspan="3">
                 <widget class="QCheckBox" name="step2_ica_checkbox">
@@ -789,8 +613,8 @@ color: rgb(255, 255, 255);</string>
                  </property>
                 </widget>
                </item>
-               <item row="9" column="0" colspan="3">
-                <widget class="QCheckBox" name="step2_interpolation_checkbox">
+               <item row="5" column="0" colspan="2">
+                <widget class="QCheckBox" name="step2_eog_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
                  </property>
@@ -807,37 +631,126 @@ color: rgb(255, 255, 255);</string>
                   </font>
                  </property>
                  <property name="text">
-                  <string>Bad Channel Interpolation</string>
+                  <string>(Optional) Remove EOG Artifacts (Requires EOG Channel)</string>
                  </property>
                  <property name="checked">
+                  <bool>false</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="1">
+                <widget class="QLineEdit" name="step2_downsample_lineedit">
+                 <property name="text">
+                  <string>500</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>4</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="0" column="0" colspan="3">
+                <widget class="QLabel" name="step2_preprocessing_label">
+                 <property name="enabled">
                   <bool>true</bool>
                  </property>
-                </widget>
-               </item>
-               <item row="3" column="2">
-                <widget class="QLabel" name="label_2">
                  <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+                  <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
                    <horstretch>0</horstretch>
                    <verstretch>0</verstretch>
                   </sizepolicy>
                  </property>
+                 <property name="font">
+                  <font>
+                   <pointsize>16</pointsize>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">background-color: rgb(0, 0, 0);
+color: rgb(255, 255, 255);</string>
+                 </property>
                  <property name="text">
-                  <string>Hz</string>
+                  <string>Preprocessing Steps</string>
                  </property>
                 </widget>
                </item>
-               <item row="8" column="0">
-                <widget class="QLabel" name="iclabel_label">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Remove Components Classified as:</string>
-                 </property>
+               <item row="2" column="1">
+                <layout class="QHBoxLayout" name="bp_HLayout">
+                 <item>
+                  <widget class="QLabel" name="hp_label">
+                   <property name="sizePolicy">
+                    <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+                     <horstretch>0</horstretch>
+                     <verstretch>0</verstretch>
+                    </sizepolicy>
+                   </property>
+                   <property name="text">
+                    <string>Highpass (Hz):</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="step2_hp_filter_lineedit">
+                   <property name="text">
+                    <string>1</string>
+                   </property>
+                   <property name="maxLength">
+                    <number>1</number>
+                   </property>
+                   <property name="alignment">
+                    <set>Qt::AlignCenter</set>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLabel" name="lp_label">
+                   <property name="sizePolicy">
+                    <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+                     <horstretch>0</horstretch>
+                     <verstretch>0</verstretch>
+                    </sizepolicy>
+                   </property>
+                   <property name="text">
+                    <string>Lowpass (Hz):</string>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QLineEdit" name="step2_lp_filter_lineedit">
+                   <property name="text">
+                    <string>100</string>
+                   </property>
+                   <property name="maxLength">
+                    <number>3</number>
+                   </property>
+                   <property name="alignment">
+                    <set>Qt::AlignCenter</set>
+                   </property>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item row="7" column="1">
+                <widget class="QComboBox" name="ica_method_combobox">
+                 <item>
+                  <property name="text">
+                   <string>fastica</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>infomax</string>
+                  </property>
+                 </item>
+                 <item>
+                  <property name="text">
+                   <string>picard</string>
+                  </property>
+                 </item>
                 </widget>
                </item>
                <item row="12" column="0">
@@ -864,25 +777,6 @@ color: rgb(255, 255, 255);</string>
                  <property name="text">
                   <string>ICA method:</string>
                  </property>
-                </widget>
-               </item>
-               <item row="7" column="1">
-                <widget class="QComboBox" name="ica_method_combobox">
-                 <item>
-                  <property name="text">
-                   <string>fastica</string>
-                  </property>
-                 </item>
-                 <item>
-                  <property name="text">
-                   <string>infomax</string>
-                  </property>
-                 </item>
-                 <item>
-                  <property name="text">
-                   <string>picard</string>
-                  </property>
-                 </item>
                 </widget>
                </item>
                <item row="8" column="1">
@@ -929,74 +823,8 @@ color: rgb(255, 255, 255);</string>
                  </item>
                 </layout>
                </item>
-               <item row="2" column="1">
-                <widget class="QLineEdit" name="step2_hp_filter_lineedit">
-                 <property name="text">
-                  <string>1</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>1</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="3" column="1">
-                <widget class="QLineEdit" name="step2_downsample_lineedit">
-                 <property name="text">
-                  <string>500</string>
-                 </property>
-                 <property name="maxLength">
-                  <number>4</number>
-                 </property>
-                 <property name="alignment">
-                  <set>Qt::AlignCenter</set>
-                 </property>
-                </widget>
-               </item>
-               <item row="0" column="0" colspan="3">
-                <widget class="QLabel" name="step2_preprocessing_label">
-                 <property name="enabled">
-                  <bool>true</bool>
-                 </property>
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="font">
-                  <font>
-                   <pointsize>16</pointsize>
-                   <weight>75</weight>
-                   <bold>true</bold>
-                  </font>
-                 </property>
-                 <property name="styleSheet">
-                  <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
-                 </property>
-                 <property name="text">
-                  <string>Preprocessing Steps</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="2" column="2">
-                <widget class="QLabel" name="label">
-                 <property name="sizePolicy">
-                  <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
-                   <horstretch>0</horstretch>
-                   <verstretch>0</verstretch>
-                  </sizepolicy>
-                 </property>
-                 <property name="text">
-                  <string>Hz</string>
-                 </property>
-                </widget>
-               </item>
-               <item row="5" column="0" colspan="2">
-                <widget class="QCheckBox" name="step2_eog_checkbox">
+               <item row="4" column="0" colspan="3">
+                <widget class="QCheckBox" name="step2_prep_checkbox">
                  <property name="enabled">
                   <bool>true</bool>
                  </property>
@@ -1013,7 +841,186 @@ color: rgb(255, 255, 255);</string>
                   </font>
                  </property>
                  <property name="text">
-                  <string>Remove EOG Artifacts (Requires EOG Channel)</string>
+                  <string>Bad Channel Rejection (PREP Pipeline)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="1">
+                <layout class="QHBoxLayout" name="line_HLayout">
+                 <item>
+                  <widget class="QRadioButton" name="line_50_radio">
+                   <property name="text">
+                    <string>50 Hz</string>
+                   </property>
+                   <attribute name="buttonGroup">
+                    <string notr="true">LineNoise_ButtonGroup</string>
+                   </attribute>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QRadioButton" name="line_60_radio">
+                   <property name="text">
+                    <string>60 Hz</string>
+                   </property>
+                   <property name="checked">
+                    <bool>true</bool>
+                   </property>
+                   <attribute name="buttonGroup">
+                    <string notr="true">LineNoise_ButtonGroup</string>
+                   </attribute>
+                  </widget>
+                 </item>
+                </layout>
+               </item>
+               <item row="8" column="0">
+                <widget class="QLabel" name="iclabel_label">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>Remove Components Classified as:</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="2" column="0">
+                <widget class="QCheckBox" name="step2_bp_filter_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Bandpass Filter</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="12" column="1">
+                <widget class="QLineEdit" name="asr_cutoff_lineedit">
+                 <property name="text">
+                  <string>5</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>2</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="1">
+                <widget class="QLineEdit" name="asr_calibration_lineedit">
+                 <property name="text">
+                  <string>60</string>
+                 </property>
+                 <property name="maxLength">
+                  <number>3</number>
+                 </property>
+                 <property name="alignment">
+                  <set>Qt::AlignCenter</set>
+                 </property>
+                </widget>
+               </item>
+               <item row="3" column="0">
+                <widget class="QCheckBox" name="step2_downsample_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Downsample Data (Hz)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="10" column="0" colspan="2">
+                <widget class="QCheckBox" name="step2_asr_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Bad Time Segments Removal (Artifact Subspace Reconstruction)</string>
+                 </property>
+                 <property name="checked">
+                  <bool>true</bool>
+                 </property>
+                </widget>
+               </item>
+               <item row="11" column="0">
+                <widget class="QLabel" name="asr_calibration_label">
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="text">
+                  <string>Calibration Data (Sec):</string>
+                 </property>
+                </widget>
+               </item>
+               <item row="1" column="0">
+                <widget class="QCheckBox" name="step2_line_noise_checkbox">
+                 <property name="enabled">
+                  <bool>true</bool>
+                 </property>
+                 <property name="sizePolicy">
+                  <sizepolicy hsizetype="Maximum" vsizetype="Maximum">
+                   <horstretch>0</horstretch>
+                   <verstretch>0</verstretch>
+                  </sizepolicy>
+                 </property>
+                 <property name="font">
+                  <font>
+                   <weight>75</weight>
+                   <bold>true</bold>
+                  </font>
+                 </property>
+                 <property name="text">
+                  <string>Line Noise Removal (Denoising Source Separation)</string>
                  </property>
                  <property name="checked">
                   <bool>true</bool>
@@ -1182,6 +1189,9 @@ color: rgb(255, 255, 255);</string>
                  <weight>75</weight>
                  <bold>true</bold>
                 </font>
+               </property>
+               <property name="cursor">
+                <cursorShape>PointingHandCursor</cursorShape>
                </property>
                <property name="text">
                 <string>Select Save Location</string>
@@ -1368,7 +1378,7 @@ color: rgb(255, 255, 255);</string>
  <connections/>
  <buttongroups>
   <buttongroup name="Montage_ButtonGroup"/>
-  <buttongroup name="LineNoise_ButtonGroup"/>
   <buttongroup name="FindData_ButtonGroup"/>
+  <buttongroup name="LineNoise_ButtonGroup"/>
  </buttongroups>
 </ui>
