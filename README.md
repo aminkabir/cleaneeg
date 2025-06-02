@@ -83,7 +83,7 @@ Check/uncheck the desired preprocessing options:
 
 - **Line Noise Removal (DSS)[^3] - Remove 50/60 Hz interference**
 
-- **Highpass Filter - Default: 1 Hz[^4]**
+- **Bandpass Filter - Default: Highpass: 1 Hz - Lowpass: 100 Hz[^4]**
 
 - **Downsample Data - Default: 500 Hz[^5]**
 
