@@ -107,7 +107,7 @@ Check/uncheck the desired preprocessing options:
 - Monitor progress in the status bar
 - Check log messages for real-time updates
 
-## cleaneeg_tutorial.ipynb
+## [cleaneeg_tutorial.ipynb] (https://github.com/aminkabir/cleaneeg/blob/main/cleaneeg/cleaneeg_tutorial.ipynb)
 
 For users new to EEG preprocessing or CleanEEG, open cleaneeg_tutorial.ipynb in Jupyter Notebook or JupyterLab. This tutorial provides:
 
