@@ -7,7 +7,7 @@ Author: Amin Kabir
 import sys
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QWidget, QFileDialog,
                              QMessageBox, QListWidgetItem, QLabel, QPushButton, QVBoxLayout)
@@ -28,6 +28,7 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5 import NavigationToolbar2QT
 import warnings
 from scipy.io import loadmat
+from scipy import signal
 matplotlib.use('Qt5Agg')
 warnings.filterwarnings('ignore')
 
@@ -39,13 +40,13 @@ class MNEPlotWidget(QWidget):
         self.figure = Figure(figsize=(12, 6))
         self.canvas = FigureCanvas(self.figure)
         self.toolbar = NavigationToolbar(self.canvas, self)
-        
+
         # Layout
         layout = QVBoxLayout()
         layout.addWidget(self.toolbar)
         layout.addWidget(self.canvas)
         self.setLayout(layout)
-        
+
     def clear(self):
         """Clear the plot"""
         self.figure.clear()
@@ -65,6 +66,8 @@ class CleanEEGWorker(QThread):
         self.output_path = output_path
         self.settings = settings
         self.ica_object = None
+        self.processing_stages = {}  # Store raw data at each stage for quality assessment
+        self.snr_log = {}  # Store SNR values at each stage
 
     @staticmethod
     def _read_mat_locations(fname):
@@ -132,6 +135,106 @@ class CleanEEGWorker(QThread):
             ch_pos[label] = np.array([y, x, z])
         return ch_pos
 
+    @staticmethod
+    def compute_snr(raw: mne.io.Raw, freq_bands: Optional[Dict[str, Tuple[float, float]]] = None, method: str = 'rms')\
+            -> Dict[str, Dict[str, float]]:
+        """
+        Compute Signal-to-Noise Ratio for EEG data.
+
+        Parameters:
+        -----------
+        raw : mne.io.Raw
+            The EEG data
+        freq_bands : dict
+            Dictionary of frequency bands to analyze
+        method : str
+            Method for SNR calculation ('rms' or 'spectral')
+
+        Returns:
+        --------
+        snr_results : dict
+            SNR values for different frequency bands
+        """
+        if freq_bands is None:
+            freq_bands = {
+                'delta': (1, 4),
+                'theta': (4, 8),
+                'alpha': (8, 13),
+                'beta': (13, 30),
+                'gamma': (30, 100)
+            }
+
+        # Get data and sampling frequency
+        data = raw.get_data()
+        sfreq = raw.info['sfreq']
+
+        snr_results = {}
+
+        if method == 'spectral':
+            # Compute PSD
+            freqs, psd = signal.welch(data, sfreq, nperseg=int(2*sfreq))
+
+            for band_name, (low_freq, high_freq) in freq_bands.items():
+                # Find frequency indices
+                freq_mask = (freqs >= low_freq) & (freqs <= high_freq)
+
+                # Signal power in the band
+                signal_power = np.mean(psd[:, freq_mask], axis=1)
+
+                # Noise estimation (neighboring frequencies)
+                noise_low = max(0, low_freq - 2)
+                noise_high = min(freqs[-1], high_freq + 2)
+                noise_mask = ((freqs >= noise_low) & (freqs < low_freq)) | ((freqs > high_freq) & (freqs <= noise_high))
+
+                if np.any(noise_mask):
+                    noise_power = np.mean(psd[:, noise_mask], axis=1)
+                    snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
+                else:
+                    snr = np.full(len(raw.ch_names), np.nan)
+
+                snr_results[band_name] = {
+                    'mean_snr': np.nanmean(snr),
+                    'std_snr': np.nanstd(snr),
+                    'channel_snr': snr
+                }
+
+        else:  # RMS method
+            for band_name, (low_freq, high_freq) in freq_bands.items():
+                # Skip bands that exceed Nyquist frequency
+                if high_freq > sfreq / 2:
+                    snr_results[band_name] = {
+                        'mean_snr': np.nan,
+                        'std_snr': np.nan,
+                        'channel_snr': np.full(len(raw.ch_names), np.nan)
+                    }
+                    continue
+
+                # Filter data to frequency band
+                raw_filtered = raw.copy().filter(low_freq, high_freq, verbose=False)
+                filtered_data = raw_filtered.get_data()
+
+                # RMS of signal
+                signal_rms = np.sqrt(np.mean(filtered_data**2, axis=1))
+
+                # Estimate noise from high frequencies (above 80 Hz)
+                if raw.info['sfreq'] > 160:  # Ensure we can filter above 80 Hz
+                    raw_noise = raw.copy().filter(80, None, verbose=False)
+                    noise_data = raw_noise.get_data()
+                    noise_rms = np.sqrt(np.mean(noise_data**2, axis=1))
+                    snr = 20 * np.log10(signal_rms / (noise_rms + 1e-10))
+                else:
+                    # Use standard deviation as noise estimate
+                    noise_std = np.std(filtered_data, axis=1)
+                    snr = 20 * np.log10(signal_rms / (noise_std + 1e-10))
+
+                snr_results[band_name] = {
+                    'mean_snr': np.mean(snr),
+                    'std_snr': np.std(snr),
+                    'channel_snr': snr
+                }
+
+        return snr_results
+
     def run(self):
         try:
             filename = Path(self.file_path).name
@@ -142,7 +245,11 @@ class CleanEEGWorker(QThread):
             raw_eeg = self._load_eeg_data(self.file_path)
             raw_original_for_report = raw_eeg.copy()
             bads_before_processing = []
-            
+
+            # Store original and compute initial SNR
+            self.processing_stages['Original'] = raw_eeg.copy()
+            self.snr_log['Original'] = self.compute_snr(raw_eeg)
+
             # Initialize progress tracking
             total_steps = sum([
                 self.settings.get('set_montage', False),
@@ -154,14 +261,14 @@ class CleanEEGWorker(QThread):
                 self.settings.get('apply_asr', False),
                 self.settings.get('interpolate_bads', False)
             ])
-            
+
             if total_steps == 0:
                 self.progress_update.emit(100)
                 self.processing_complete.emit(filename, raw_eeg)
                 return
-                
+
             current_step = 0
-            
+
             # Set montage (only if checkbox is checked and montage is provided)
             if self.settings.get('set_montage') and self.settings.get('montage'):
                 current_step += 1
@@ -169,6 +276,7 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Setting montage...")
                 self._set_montage(raw_eeg, self.settings['montage'])
+                # Montage doesn't change the signal, so no new stage needed
 
             # Resample (only if checkbox is checked)
             if self.settings.get('apply_downsample') and self.settings.get('resample_freq'):
@@ -177,6 +285,8 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Downsampling data...")
                 raw_eeg.resample(self.settings['resample_freq'])
+                self.processing_stages['After Downsample'] = raw_eeg.copy()
+                self.snr_log['After Downsample'] = self.compute_snr(raw_eeg)
 
             raw_clean = raw_eeg.copy()
 
@@ -187,14 +297,20 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Removing line noise...")
                 raw_clean = self._remove_line_noise(raw_clean, self.settings['line_freq'])
+                self.processing_stages['After Line Noise'] = raw_clean.copy()
+                self.snr_log['After Line Noise'] = self.compute_snr(raw_clean)
 
-            # High-pass filter (only if checkbox is checked)
+            # Bandpass filter (only if checkbox is checked)
             if self.settings.get('apply_bandpass') and self.settings.get('highpass_freq'):
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Applying high-pass filter...")
-                raw_clean.filter(l_freq=self.settings['highpass_freq'], h_freq=None, method='fir')
+                self.status_update.emit("Applying bandpass filter...")
+                hp_freq = self.settings['highpass_freq']
+                lp_freq = self.settings.get('lowpass_freq', 100)  # Default to 100 Hz if not specified
+                raw_clean.filter(l_freq=hp_freq, h_freq=lp_freq, method='fir', verbose=False)
+                self.processing_stages['After Bandpass'] = raw_clean.copy()
+                self.snr_log['After Bandpass'] = self.compute_snr(raw_clean)
 
             # Bad channel detection (only if checkbox is checked)
             if self.settings.get('detect_bad_channels'):
@@ -205,6 +321,8 @@ class CleanEEGWorker(QThread):
                 bad_channels = self._detect_bad_channels(raw_clean)
                 raw_clean.info['bads'] = bad_channels
                 bads_before_processing = list(bad_channels)
+                self.processing_stages['After Bad Channels'] = raw_clean.copy()
+                self.snr_log['After Bad Channels'] = self.compute_snr(raw_clean)
 
             # Pick channels
             raw_clean.pick(picks='eeg')
@@ -220,6 +338,8 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Running ICA...")
                 raw_clean, self.ica_object = self._apply_ica(raw_clean, self.settings)
+                self.processing_stages['After ICA'] = raw_clean.copy()
+                self.snr_log['After ICA'] = self.compute_snr(raw_clean)
 
             # ASR (only if checkbox is checked)
             if self.settings.get('apply_asr'):
@@ -228,7 +348,10 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Applying ASR...")
                 asr_cutoff = self.settings.get('asr_cutoff', 5)
-                raw_clean = self._apply_asr(raw_clean, asr_cutoff)
+                asr_calibration = self.settings.get('asr_calibration', 60)
+                raw_clean = self._apply_asr(raw_clean, asr_cutoff, asr_calibration)
+                self.processing_stages['After ASR'] = raw_clean.copy()
+                self.snr_log['After ASR'] = self.compute_snr(raw_clean)
 
             # Interpolate bad channels (only if checkbox is checked and bad channels exist)
             if self.settings.get('interpolate_bads') and len(raw_clean.info['bads']) > 0:
@@ -237,6 +360,12 @@ class CleanEEGWorker(QThread):
                 self.progress_update.emit(progress)
                 self.status_update.emit("Interpolating bad channels...")
                 raw_clean.interpolate_bads(reset_bads=True)
+                self.processing_stages['After Interpolation'] = raw_clean.copy()
+                self.snr_log['After Interpolation'] = self.compute_snr(raw_clean)
+
+            # Store final processed data
+            self.processing_stages['Final'] = raw_clean.copy()
+            self.snr_log['Final'] = self.compute_snr(raw_clean)
 
             # Save the processed data
             self.progress_update.emit(95)
@@ -245,11 +374,11 @@ class CleanEEGWorker(QThread):
 
             # Generate and save report if requested
             if self.settings.get('export_report'):
-                self.status_update.emit("Generating HTML report...")
-                self._generate_and_save_report(raw_original_for_report, raw_clean, 
-                                               bads_before_processing, filename, 
-                                               self.settings.get('input_base_dir'))
-                self.status_update.emit("HTML report generated.")
+                self.status_update.emit("Generating enhanced HTML report...")
+                self._generate_enhanced_report(
+                    raw_original_for_report, raw_clean, bads_before_processing, filename,
+                    self.settings.get('input_base_dir'))
+                self.status_update.emit("Enhanced HTML report generated.")
 
             self.progress_update.emit(100)
             self.processing_complete.emit(filename, raw_clean)
@@ -257,15 +386,35 @@ class CleanEEGWorker(QThread):
         except Exception as e:
             self.processing_error.emit(filename, str(e))
 
-    def _load_eeg_data(self, file_path: str) -> mne.io.Raw:
-        """Load EEG data using automatic format detection"""
+    @staticmethod
+    def _load_eeg_data(file_path: str) -> mne.io.Raw:
+        """Load EEG data with automatic format detection and correct common mislabels."""
         try:
-            # Use mne.io.read_raw which automatically detects the file format
-            return mne.io.read_raw(file_path, preload=True, verbose='WARNING')
+            raw = mne.io.read_raw(file_path, preload=True, verbose="WARNING")
+            # Patterns for channels that aren’t true EEG
+            eog_patterns = ["EOG", "VEOG", "HEOG", "EOGH", "EOGV", "EOG1", "EOG2", "LHEOG", "RHEOG"]
+            ref_patterns = ["REF", "GND", "A1", "A2", "M1", "M2", "TP9", "TP10"]
+            other_patterns = ["ECG", "EMG", "RESP", "TRIG", "STI"]
+            mislabeled = []
+            for ch in raw.ch_names:
+                cu = ch.upper()
+                if any(pat in cu for pat in eog_patterns):
+                    mislabeled.append((ch, "eog"))
+                elif any(pat in cu for pat in ref_patterns):
+                    mislabeled.append((ch, "misc"))
+                elif any(pat in cu for pat in other_patterns):
+                    mislabeled.append((ch, "misc"))
+            if mislabeled:
+                for name, ctype in mislabeled:
+                    print(f"Channel types corrected: {name} → {ctype}")
+                    raw.set_channel_types({name: ctype})
+            return raw
+
         except Exception as e:
-            # If automatic detection fails, provide more specific error message
             ext = Path(file_path).suffix.lower()
-            raise ValueError(f"Failed to load file '{file_path}' with extension '{ext}': {str(e)}")
+            raise ValueError(
+                f"Failed to load '{file_path}' (.{ext}): {e}"
+            )
 
     def _set_montage(self, raw: mne.io.Raw, montage_info: str):
         """Set EEG montage"""
@@ -273,7 +422,8 @@ class CleanEEGWorker(QThread):
         montage_identifier = montage_info
         montage_applied_successfully = False
 
-        self.status_update.emit(f"Attempting to set montage. Type: '{montage_type}', Identifier: '{montage_identifier}'")
+        self.status_update.emit(
+            f"Attempting to set montage. Type: '{montage_type}', Identifier: '{montage_identifier}'")
 
         try:
             if montage_type == 'template':
@@ -281,7 +431,7 @@ class CleanEEGWorker(QThread):
                 raw.set_montage(montage, match_case=False, on_missing='warn')
                 montage_applied_successfully = True
                 self.status_update.emit(f"Applied template montage: {montage_identifier}")
-            
+
             elif montage_type == 'custom':
                 if not os.path.exists(montage_identifier):
                     self.status_update.emit(f"Custom montage file not found: {montage_identifier}")
@@ -303,7 +453,7 @@ class CleanEEGWorker(QThread):
                         ch_pos_dict = CleanEEGWorker._read_ced_locations(montage_identifier)
                     except Exception as e_ced:
                         self.status_update.emit(f"Error reading {file_ext} file '{montage_identifier}': {e_ced}")
-                
+
                 if ch_pos_dict:
                     self.status_update.emit(f"Successfully read channel positions from {file_ext} file.")
                     try:
@@ -317,7 +467,7 @@ class CleanEEGWorker(QThread):
                     except Exception as e_make_dig:
                         self.status_update.emit(
                             f"Error creating DigMontage from {file_ext} data: {e_make_dig}. Will attempt fallback.")
-                
+
                 if not montage_created_from_dict:
                     self.status_update.emit(
                         f"Attempting fallback: mne.channels.read_custom_montage for: {montage_identifier}")
@@ -330,25 +480,29 @@ class CleanEEGWorker(QThread):
                     except Exception as e_read_custom:
                         self.status_update.emit(
                             f"Fallback read_custom_montage also failed for '{montage_identifier}': {e_read_custom}")
-            
-            else: # Unknown montage type
+
+            else:
                 self.status_update.emit(f"Unknown montage type: '{montage_type}'. Montage not applied.")
 
         except Exception as e_set_montage_outer:
             self.status_update.emit(
-                f"Outer error during montage setting for '{montage_identifier}': {e_set_montage_outer}. Montage may not be applied.")
+                f"Outer error during montage setting for '{montage_identifier}':"
+                f"{e_set_montage_outer}. Montage may not be applied.")
 
         if not montage_applied_successfully:
-             self.status_update.emit(
-                 f"Warning: Montage '{montage_identifier}' (type: {montage_type}) could not be fully applied. Processing continues.")
+            self.status_update.emit(
+                f"Warning: Montage '{montage_identifier}'"
+                f"(type: {montage_type}) could not be fully applied. Processing continues.")
         elif raw.get_montage() is None:
-             self.status_update.emit(
-                 f"Warning: Montage was reportedly applied, but raw.get_montage() is still None for '{montage_identifier}'.")
+            self.status_update.emit(
+                f"Warning: Montage was reportedly applied,"
+                f"but raw.get_montage() is still None for '{montage_identifier}'.")
         else:
-             self.status_update.emit(
-                 f"Montage '{montage_identifier}' (type: {montage_type}) successfully set and verified.")
+            self.status_update.emit(
+                f"Montage '{montage_identifier}' (type: {montage_type}) successfully set and verified.")
 
-    def _remove_line_noise(self, raw: mne.io.Raw, line_freq: int) -> mne.io.Raw:
+    @staticmethod
+    def _remove_line_noise(raw: mne.io.Raw, line_freq: int) -> mne.io.Raw:
         """Remove line noise using DSS"""
         eeg_data = raw.get_data()
         processed_data, _ = dss.dss_line(
@@ -360,7 +514,8 @@ class CleanEEGWorker(QThread):
         raw._data = processed_data.T
         return raw
 
-    def _detect_bad_channels(self, raw: mne.io.Raw) -> List[str]:
+    @staticmethod
+    def _detect_bad_channels(raw: mne.io.Raw) -> List[str]:
         """Detect bad channels using PyPrep"""
         picks_eeg_only = mne.pick_types(raw.info, eeg=True, eog=False)
         nd = NoisyChannels(raw.copy().pick(picks=picks_eeg_only), random_state=1337)
@@ -371,7 +526,8 @@ class CleanEEGWorker(QThread):
             return bad_channels
         return []
 
-    def _apply_ica(self, raw: mne.io.Raw, settings: Dict[str, Any]) -> mne.io.Raw:
+    @staticmethod
+    def _apply_ica(raw: mne.io.Raw, settings: Dict[str, Any]) -> Tuple[mne.io.Raw, ICA]:
         """Apply ICA and remove artifacts"""
         ica_method = settings.get('ica_method', 'fastica')
         ica = ICA(n_components=None, random_state=97, method=ica_method)
@@ -398,30 +554,36 @@ class CleanEEGWorker(QThread):
         ]
 
         ica.exclude = exclude_idx
-        return ica.apply(raw), ica # Return ICA object as well
+        return ica.apply(raw), ica
 
-    def _apply_asr(self, raw: mne.io.Raw, cutoff: float) -> mne.io.Raw:
-        """Apply ASR"""
+    @staticmethod
+    def _apply_asr(raw: mne.io.Raw, cutoff: float, asr_calibration: float) -> mne.io.Raw:
+        """Apply ASR; if anything goes wrong, return raw unchanged."""
         picks_eeg_good = mne.pick_types(raw.info, eeg=True, eog=False, exclude='bads')
         eeg_data_for_asr = raw.get_data(picks=picks_eeg_good)
 
-        asr = ASR(sfreq=raw.info['sfreq'], cutoff=cutoff)
+        try:
+            asr = ASR(sfreq=raw.info['sfreq'], cutoff=cutoff, method='euclid')
 
-        # Fit ASR on a clean portion of the data (first 30 seconds or less)
-        train_duration = min(30, raw.times[-1])
-        train_data = eeg_data_for_asr[:, :int(train_duration * raw.info['sfreq'])]
-        asr.fit(train_data)
+            # Fit ASR on a clean portion of the data
+            train_duration = min(asr_calibration, raw.times[-1])
+            train_data = eeg_data_for_asr[:, : int(train_duration * raw.info['sfreq'])]
+            asr.fit(train_data)
 
-        # Transform the entire dataset
-        cleaned_data = asr.transform(eeg_data_for_asr)
-        raw._data[picks_eeg_good] = cleaned_data
+            # Transform the entire dataset
+            cleaned_data = asr.transform(eeg_data_for_asr)
+            raw._data[picks_eeg_good] = cleaned_data
+
+        except Exception:
+            # If any error occurs, return raw without modification
+            return raw
 
         return raw
 
     def _save_processed_data(self, raw: mne.io.Raw, original_filename: str) -> str:
         """Save processed data, preserving input subfolder structure."""
         input_base_dir_str = self.settings.get('input_base_dir', None)
-        original_filepath = Path(self.file_path) # self.file_path is the full original path
+        original_filepath = Path(self.file_path)
 
         if input_base_dir_str:
             input_base_dir = Path(input_base_dir_str)
@@ -431,12 +593,12 @@ class CleanEEGWorker(QThread):
                 # This can happen if original_filepath.parent is not a subpath of input_base_dir
                 # (e.g., if input_base_dir is a file, or they are on different drives)
                 # In such cases, save directly to output_path without subfolders.
-                relative_dir = Path(".") 
+                relative_dir = Path(".")
             target_output_dir = Path(self.output_path) / relative_dir
         else:
             # If no input_base_dir, save directly to output_path
             target_output_dir = Path(self.output_path)
-        
+
         target_output_dir.mkdir(parents=True, exist_ok=True)
 
         base_name = Path(original_filename).stem
@@ -467,381 +629,34 @@ class CleanEEGWorker(QThread):
 
         return str(output_file)
 
-    def _generate_and_save_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
-                                  bads_detected: List[str], original_filename: str,
-                                  input_base_dir_str: Optional[str] = None):
-        """Generates and saves an HTML report of the preprocessing steps in a single section."""
-        report_generation_successful = False
+    def _generate_enhanced_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
+                                 bads_detected: List[str], original_filename: str,
+                                 input_base_dir_str: Optional[str] = None):
+        """Generates an enhanced HTML report with quality assessment metrics."""
         try:
-            self.status_update.emit("Initializing report...")
-            report_title = f"Preprocessing Report for {original_filename}"
+            self.status_update.emit("Initializing enhanced report...")
+            report_title = f"Enhanced Preprocessing Report for {original_filename}"
             report = mne.Report(title=report_title, verbose=False)
 
-            main_section_title = "EEG Preprocessing Pipeline"
+            main_section_title = "EEG Preprocessing Pipeline with Quality Assessment"
+
+            # Add comprehensive summary at the beginning
+            summary_html = self._create_summary_html(original_filename)
+            report.add_html(summary_html, title="Executive Summary", section=main_section_title, tags=("Summary",))
+
+            # Add SNR improvement table
+            snr_table_html = self._create_snr_summary_table()
             report.add_html(
-                f"<h1>{main_section_title}</h1>", title="Pipeline Header", section=main_section_title,
-                tags=("Pipeline", "Header"))
+                snr_table_html, title="SNR Improvement Summary", section=main_section_title, tags=("SNR", "Summary"))
 
-            step_counter = 0
-            temp_raw_for_psd = raw_orig.copy()
+            # Process each stage and add to report
+            for stage_name, stage_raw in self.processing_stages.items():
+                self._add_stage_to_report(report, stage_name, stage_raw, main_section_title)
 
-            # --- Step 0: Original Data ---
-            step_counter += 1
-            report.add_html(
-                f"<h2>Step {step_counter}: Original Data</h2>", title=f"Step{step_counter}_OriginalDataHeader",
-                section=main_section_title, tags=("OriginalData", "Header"))
-            if raw_orig.get_montage():
-                fig_sensors_orig = raw_orig.plot_sensors(show_names=True, show=False)
-                report.add_figure(fig_sensors_orig, title="Original Sensor Locations", section=main_section_title,
-                                  tags=("OriginalData", "montage"))
-                plt.close(fig_sensors_orig)
-            report.add_raw(raw_orig, title="Original Raw Data Snippet", psd=False, tags=("OriginalData", "raw_snippet"))
-            self._add_psd_plot_to_report(
-                report, temp_raw_for_psd, "PSD: Original Data", "OriginalDataPSD",
-                main_section_title, status_update_prefix=f"Step {step_counter}: ")
+            # Add overall comparison plots
+            self._add_comparison_plots(report, main_section_title)
 
-            # --- Step: Montage Setting (if applied) ---
-            if self.settings.get('set_montage') and self.settings.get('montage'):
-                step_counter += 1
-                montage_name = self.settings['montage']
-                report.add_html(
-                    f"<h2>Step {step_counter}: Set Montage</h2>"
-                    f"<p>Attempting to apply montage: {montage_name} to the data for consistent PSD reporting. "
-                    f"Effects on data (if any beyond channel locations) will be seen in subsequent PSDs.</p>",
-                    title=f"Step{step_counter}_SetMontage", section=main_section_title, tags=("SetMontage", "info"))
-                try:
-                    montage_obj = mne.channels.make_standard_montage(montage_name)
-                    temp_raw_for_psd.set_montage(montage_obj, match_case=False, on_missing='warn')
-                    self.status_update.emit(f"Montage '{montage_name}' set for report's temporary raw data.")
-                    
-                    if temp_raw_for_psd.get_montage():
-                        fig_sensors_temp = temp_raw_for_psd.plot_sensors(show_names=True, show=False)
-                        report.add_figure(
-                            fig_sensors_temp, title=f"Sensor Locations on Temp Data after setting {montage_name}",
-                            section=main_section_title, tags=("SetMontage", "temp_montage_plot"))
-                        plt.close(fig_sensors_temp)
-
-                except Exception as e_montage:
-                    err_msg = f"Could not apply montage '{montage_name}' to temporary data for report: {e_montage}"
-                    self.status_update.emit(err_msg)
-                    report.add_html(
-                        f"<p style=\'color:red;\'>{err_msg}</p>", title="SetMontageError_Report",
-                        section=main_section_title, tags=("SetMontage", "error"))
-                
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, f"PSD: After Attempting to Set Montage ({montage_name})",
-                    f"SetMontagePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Step: Resampling (if applied) ---
-            if self.settings.get('apply_downsample') and self.settings.get('resample_freq'):
-                step_counter += 1
-                resample_f = self.settings['resample_freq']
-                report.add_html(f"<h2>Step {step_counter}: Resample Data</h2>"
-                                f"<p>Data was resampled to {resample_f} Hz.</p>",
-                                title=f"Step{step_counter}_Resample", section=main_section_title,
-                                tags=("Resample", "info"))
-                temp_raw_for_psd.resample(resample_f)
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, f"PSD: After Resampling to {resample_f} Hz", f"ResamplePSD",
-                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Step: Line Noise Removal (if applied) ---
-            if self.settings.get('remove_line_noise'):
-                step_counter += 1
-                line_f = self.settings['line_freq']
-                report.add_html(f"<h2>Step {step_counter}: Line Noise Removal (DSS)</h2>"
-                                f"<p>Line noise at {line_f} Hz was removed using DSS.</p>",
-                                title=f"Step{step_counter}_LineNoise", section=main_section_title,
-                                tags=("LineNoise", "info"))
-                
-                # Re-apply DSS for PSD on a copy - this is computationally intensive for report
-                # Alternative: use a snapshot of raw_clean from worker if available at this stage
-                # For now, we'll use the temp_raw_for_psd which has accumulated changes
-                data_for_dss = temp_raw_for_psd.get_data()
-                data_after_dss, _ = dss.dss_line(
-                    data_for_dss.T, fline=line_f, sfreq=temp_raw_for_psd.info['sfreq'], show=False)
-                temp_raw_for_psd._data = data_after_dss.T
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, f"PSD: After DSS Line Noise ({line_f} Hz) Removal",
-                    f"LineNoisePSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-            
-            # --- Step: High-pass Filter (if applied) ---
-            if self.settings.get('apply_bandpass') and self.settings.get('highpass_freq'):
-                step_counter += 1
-                hp_f = self.settings['highpass_freq']
-                report.add_html(f"<h2>Step {step_counter}: High-Pass Filter</h2>"
-                                f"<p>Applied a high-pass filter at {hp_f} Hz.</p>",
-                                title=f"Step{step_counter}_HighPass", section=main_section_title,
-                                tags=("HighPass", "info"))
-                temp_raw_for_psd.filter(
-                    l_freq=hp_f, h_freq=None, method='fir', fir_window='hamming', fir_design='firwin')
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, f"PSD: After High-Pass Filter ({hp_f} Hz)", f"HighPassPSD",
-                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Step: Bad Channel Detection (if applied) ---
-            if self.settings.get('detect_bad_channels'):
-                step_counter += 1
-                report.add_html(
-                    f"<h2>Step {step_counter}: Bad Channel Detection (PyPrep)</h2>",
-                    title=f"Step{step_counter}_BadChannelsHeader", section=main_section_title,
-                    tags=("BadChannels", "Header"))
-                if bads_detected:
-                    report.add_html(
-                        f"<p>Detected bad channels (PyPrep): {', '.join(bads_detected)}</p>",
-                        title="Detected Bad Channels List", section=main_section_title,
-                        tags=("BadChannels", "PyPrepList"))
-                    
-                    # Visualize raw data with bad channels marked from original data
-                    temp_raw_with_bads_viz = raw_orig.copy()
-                    temp_raw_with_bads_viz.info['bads'] = bads_detected
-                    if temp_raw_with_bads_viz.get_montage():
-                        fig_bads_sensors = temp_raw_with_bads_viz.plot_sensors(show_names=True, show=False)
-                        report.add_figure(
-                            fig_bads_sensors, title="Sensor Locations with Bad Channels Marked",
-                            section=main_section_title, tags=("BadChannels", "BadSensors"))
-                        plt.close(fig_bads_sensors)
-                    
-                    fig_bads_plot = temp_raw_with_bads_viz.plot(
-                        n_channels=min(20, len(raw_orig.ch_names)), duration=10, show=False, scalings='auto')
-                    report.add_figure(
-                        fig_bads_plot, title="Original Data Snippet with Bad Channels Marked",
-                        section=main_section_title, tags=("BadChannels", "BadTimeseries"))
-                    plt.close(fig_bads_plot)
-                else:
-                    report.add_html(
-                        "<p>No bad channels detected by PyPrep.</p>", title="No Bad Channels",
-                        section=main_section_title, tags=("BadChannels", "NoBads"))
-                
-                # Update bads in temp_raw_for_psd for subsequent PSD plots
-                temp_raw_for_psd.info['bads'] = bads_detected 
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, "PSD: After Marking Bad Channels", "BadChannelsPSD",
-                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
-            
-            # At this point, an average reference is typically set. temp_raw_for_psd should reflect this.
-            # The worker applies it before ICA. We'll assume it's applied for subsequent PSDs.
-            # If not already average, apply it to temp_raw_for_psd if it makes sense for PSD.
-            if not temp_raw_for_psd.info['projs']: # Simple check if an average ref proj might be missing
-                 try:
-                    temp_raw_for_psd.set_eeg_reference('average', projection=True)
-                    self.status_update.emit(
-                        f"Applied average reference to temporary raw for PSD plots (if not already present).")
-                 except Exception as e:
-                    self.status_update.emit(f"Could not apply average reference to temp raw for PSD: {e}")
-
-            # --- Step: ICA (if applied) ---
-            if self.settings.get('apply_ica') and self.ica_object: # ica_object from worker
-                step_counter += 1
-                report.add_html(
-                    f"<h2>Step {step_counter}: Independent Component Analysis (ICA)</h2>",
-                    title=f"Step{step_counter}_ICAHeader", section=main_section_title, tags=("ICA", "Header"))
-                
-                n_excluded = len(self.ica_object.exclude)
-                report.add_html(
-                    f"<p>ICA ({self.settings.get('ica_method', 'fastica')}) was applied. {n_excluded} components were marked for exclusion by ICLabel based on selected criteria.</p>",
-                                title="ICA Status", section=main_section_title, tags=("ICA", "status"))
-
-                if self.ica_object.exclude:
-                    try:
-                        # Plot component topographies of excluded components
-                        fig_ica_topo = self.ica_object.plot_components(
-                            picks=self.ica_object.exclude[:min(15, n_excluded)], show=False)
-                        if isinstance(fig_ica_topo, list): # plot_components can return a list of figs
-                             for i, fig in enumerate(fig_ica_topo):
-                                report.add_figure(
-                                    fig, title=f"ICA Excluded Component Topographies (Set {i+1})",
-                                    section=main_section_title, tags=("ICA", "topomap_excluded"))
-                                plt.close(fig)
-                        else:
-                            report.add_figure(
-                                fig_ica_topo, title="ICA Excluded Component Topographies",
-                                section=main_section_title, tags=("ICA", "topomap_excluded"))
-                            plt.close(fig_ica_topo)
-                    except Exception as e:
-                        self.status_update.emit(f"Could not plot ICA component topographies for report: {e}")
-                        report.add_html(
-                            f"<p style=\'color:red;\'>Could not plot ICA component topographies: {e}</p>",
-                            title="ICA Topography Error", section=main_section_title, tags=("ICA", "error"))
-                    
-                    # Plot sources of a few excluded components using original data (or a copy at that stage)
-                    # For the report, we use raw_orig to show what these components looked like in the less processed data.
-                    try:
-                        raw_for_ica_sources = raw_orig.copy().load_data() # Use a less processed version for source viz
-                        # If ICA was fit on filtered data, filter this copy similarly for plot_sources
-                        if self.settings.get('apply_bandpass'):
-                            raw_for_ica_sources.filter(
-                                l_freq=self.settings.get('highpass_freq'), h_freq=self.settings.get('lowpass_freq')
-                            )
-
-                        num_excluded_to_plot = min(len(self.ica_object.exclude), 3)
-                        if num_excluded_to_plot > 0:
-                            fig_ica_sources = self.ica_object.plot_sources(
-                                raw_for_ica_sources,
-                                picks=self.ica_object.exclude[:num_excluded_to_plot],
-                                show_scrollbars=False, show=False,
-                                title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components"
-                            )
-                            report.add_figure(
-                                fig_ica_sources,
-                                title=f"Sources of First {num_excluded_to_plot} Excluded ICA Components",
-                                section=main_section_title, tags=("ICA", "sources_excluded")
-                            )
-                            plt.close(fig_ica_sources)
-                    except Exception as e:
-                        self.status_update.emit(f"Could not plot ICA sources for report: {e}")
-                        report.add_html(
-                            f"<p style=\'color:red;\'>Could not plot ICA sources: {e}</p>",
-                            title="ICA Sources Error", section=main_section_title, tags=("ICA", "error"))
-                else:
-                    report.add_html(
-                        "<p>No ICA components were excluded.</p>", title="ICA No Exclusions",
-                        section=main_section_title, tags=("ICA", "info"))
-                
-                # Apply ICA to temp_raw_for_psd
-                temp_raw_for_psd = self.ica_object.apply(temp_raw_for_psd.copy())
-                self._add_psd_plot_to_report(
-                    report, temp_raw_for_psd, "PSD: After ICA Application", "ICAPSD",
-                    main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Step: ASR (if applied) ---
-            if self.settings.get('apply_asr'):
-                step_counter += 1
-                asr_cutoff = self.settings.get('asr_cutoff', 'N/A')
-                report.add_html(f"<h2>Step {step_counter}: Artifact Subspace Reconstruction (ASR)</h2>"
-                                f"<p>ASR was applied with cutoff: {asr_cutoff}. "
-                                f"ASR attempts to clean data segments with high-amplitude noise exceeding the calibration threshold. "
-                                f"Its effects will be visible in subsequent PSD plots.</p>", 
-                                title=f"Step{step_counter}_ASR", section=main_section_title, tags=("ASR", "status"))
-
-            # --- Step: Channel Interpolation (if applied) ---
-            # Note: raw_processed has interpolation if it happened. bads_detected are pre-interpolation.
-            if self.settings.get('interpolate_bads') and bads_detected:
-                step_counter += 1
-                report.add_html(
-                    f"<h2>Step {step_counter}: Bad Channel Interpolation</h2>"
-                    f"<p>Bad channels ({', '.join(bads_detected)}) were interpolated using spherical splines.</p>",
-                    title=f"Step{step_counter}_Interpolation", section=main_section_title,
-                    tags=("Interpolation", "info"))
-                # temp_raw_for_psd here might not have interpolation if it wasn't the last step.
-                # For the PSD, we should use a version of data that HAS interpolation.
-                # Let's use raw_processed for this PSD as it's the most complete version.
-                # Or, we can try to interpolate temp_raw_for_psd if its bads are set.
-                if temp_raw_for_psd.info['bads']:
-                    try:
-                        # temp_raw_for_psd.interpolate_bads(reset_bads=True, mode='accurate') # Simpler call
-                        temp_raw_for_psd.interpolate_bads(reset_bads=True)
-                        self._add_psd_plot_to_report(
-                            report, temp_raw_for_psd, "PSD: After Channel Interpolation",
-                            "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-                    except Exception as e:
-                        report.add_html(
-                            f"<p style=\'color:red;\'>Error interpolating for report PSD: {e}</p>",
-                            title="Interpolation PSD Error", section=main_section_title,
-                            tags=("Interpolation", "error"))
-                else:
-                    self._add_psd_plot_to_report(
-                        report, raw_processed, "PSD: After Channel Interpolation (from final data)",
-                        "InterpolationPSD", main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Step: Final Processed Data ---
-            step_counter += 1
-            report.add_html(
-                f"<h2>Step {step_counter}: Final Processed Data</h2>", title=f"Step{step_counter}_FinalDataHeader",
-                section=main_section_title, tags=("FinalData", "Header"))
-            report.add_raw(
-                raw_processed, title="Final Processed Raw Data Snippet", psd=False, tags=("FinalData", "raw_snippet"))
-            if raw_processed.get_montage():
-                fig_sensors_proc = raw_processed.plot_sensors(show_names=True, show=False)
-                report.add_figure(
-                    fig_sensors_proc, title="Final Sensor Locations", section=main_section_title,
-                    tags=("FinalData", "montage"))
-                plt.close(fig_sensors_proc)
-            self._add_psd_plot_to_report(
-                report, raw_processed, "PSD: Final Processed Data", "FinalDataPSD",
-                main_section_title, status_update_prefix=f"Step {step_counter}: ")
-
-            # --- Overall PSD Comparison: Before vs. After ---
-            step_counter += 1  # For logical flow, though it's a summary plot
-            report.add_html(f"<h2>Step {step_counter}: Overall PSD Comparison: Before vs. After Processing</h2>",
-                            title=f"Step{step_counter}_PSDBeforeAfterHeader",
-                            section=main_section_title,
-                            tags=("ComparisonPSD", "Header"))
-            try:
-                self.status_update.emit("Generating Before vs. After PSD comparison plot...")
-                fig_comp, (ax_before, ax_after) = plt.subplots(1, 2, figsize=(14, 6))
-
-                # Compute PSDs with error handling
-                try:
-                    # Pick only EEG channels
-                    picks_before = mne.pick_types(raw_orig.info, eeg=True, exclude='bads')
-                    picks_after = mne.pick_types(raw_processed.info, eeg=True, exclude='bads')
-
-                    if len(picks_before) == 0 or len(picks_after) == 0:
-                        raise ValueError("No EEG channels available for PSD comparison")
-
-                    # Compute PSDs
-                    psd_before = raw_orig.compute_psd(fmin=1, fmax=40, picks=picks_before)
-                    psd_after = raw_processed.compute_psd(fmin=1, fmax=40, picks=picks_after)
-
-                    # Get the data from PSD objects - each has its own frequency array
-                    freqs_before = psd_before.freqs
-                    freqs_after = psd_after.freqs
-                    psd_before_data = psd_before.get_data().mean(axis=0)  # Average across channels
-                    psd_after_data = psd_after.get_data().mean(axis=0)
-
-                    # Convert to dB, handling potential zeros/negative values
-                    with np.errstate(divide='ignore', invalid='ignore'):
-                        psd_before_db = 10 * np.log10(psd_before_data + 1e-12)  # Add small value to avoid log(0)
-                        psd_after_db = 10 * np.log10(psd_after_data + 1e-12)
-
-                    # Plot Before Processing PSD with its own frequencies
-                    ax_before.plot(freqs_before, psd_before_db, color='blue', alpha=0.8, linewidth=2)
-                    ax_before.set_title(f"Before Processing (fs={raw_orig.info['sfreq']} Hz)", fontsize=12,
-                                        fontweight='bold')
-                    ax_before.set_xlabel("Frequency (Hz)")
-                    ax_before.set_ylabel("Power Spectral Density (dB/Hz)")
-                    ax_before.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
-                    ax_before.set_xlim(1, 40)
-
-                    # Plot After Processing PSD with its own frequencies
-                    ax_after.plot(freqs_after, psd_after_db, color='red', alpha=0.8, linewidth=2)
-                    ax_after.set_title(f"After Processing (fs={raw_processed.info['sfreq']} Hz)", fontsize=12,
-                                       fontweight='bold')
-                    ax_after.set_xlabel("Frequency (Hz)")
-                    ax_after.set_ylabel("Power Spectral Density (dB/Hz)")
-                    ax_after.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.5)
-                    ax_after.set_xlim(1, 40)
-
-                    # Make y-axis limits the same for both plots for easier comparison
-                    y_min = min(psd_before_db.min(), psd_after_db.min()) - 2
-                    y_max = max(psd_before_db.max(), psd_after_db.max()) + 2
-                    ax_before.set_ylim(y_min, y_max)
-                    ax_after.set_ylim(y_min, y_max)
-
-                    # Add overall title
-                    fig_comp.suptitle("Average EEG Power Spectral Density Comparison", fontsize=14, fontweight='bold')
-
-                    # Adjust layout
-                    fig_comp.tight_layout()
-
-                    report.add_figure(fig_comp, title="PSD Comparison: Before vs. After", section=main_section_title,
-                                      tags=("ComparisonPSD", "Plot"))
-                    plt.close(fig_comp)
-                    self.status_update.emit("Before vs. After PSD comparison plot added.")
-
-                except Exception as e:
-                    plt.close(fig_comp)  # Clean up the figure
-                    raise e
-
-            except Exception as e:
-                error_msg = f"Could not generate Before vs. After PSD comparison plot: {e}"
-                self.status_update.emit(error_msg)
-                report.add_html(f"<p style=\'color:red;\'>{error_msg}</p>",
-                                title="Comparison PSD Error",
-                                section=main_section_title, tags=("ComparisonPSD", "error"))
-
-            # --- Save report ---
+            # Save report
             original_filepath = Path(self.file_path)
             if input_base_dir_str:
                 input_base_dir = Path(input_base_dir_str)
@@ -852,62 +667,303 @@ class CleanEEGWorker(QThread):
                 target_report_dir = Path(self.output_path) / relative_dir
             else:
                 target_report_dir = Path(self.output_path)
-            
+
             target_report_dir.mkdir(parents=True, exist_ok=True)
-            report_filename = target_report_dir / f"{Path(original_filename).stem}_preprocessing_report.html"
-            
-            self.status_update.emit(f"Attempting to save report to: {str(report_filename)}")
+            report_filename = target_report_dir / f"{Path(original_filename).stem}_enhanced_report.html"
+
+            self.status_update.emit(f"Saving enhanced report to: {str(report_filename)}")
             try:
                 report.save(str(report_filename), overwrite=True, open_browser=False)
-                self.status_update.emit(f"Report successfully saved to {report_filename}")
-                report_generation_successful = True
+                self.status_update.emit(f"Enhanced report successfully saved to {report_filename}")
             except Exception as e_save:
-                save_err_msg = f"CRITICAL: Failed to save report to {report_filename}. Error: {e_save}"
+                save_err_msg = f"Failed to save report to {report_filename}. Error: {e_save}"
                 self.status_update.emit(save_err_msg)
                 self.processing_error.emit(original_filename, save_err_msg)
 
         except Exception as e_generate:
-            # Catch any other exception during report content generation
-            gen_err_msg = f"Error during report content generation for {original_filename}: {e_generate}"
+            gen_err_msg = f"Error during report generation for {original_filename}: {e_generate}"
             self.status_update.emit(gen_err_msg)
             self.processing_error.emit(original_filename, gen_err_msg)
 
-        # return report_generation_successful
+    def _create_summary_html(self, filename: str) -> str:
+        """Create executive summary HTML"""
+        stages = list(self.processing_stages.keys())
 
-    def _add_psd_plot_to_report(self, report: mne.Report, raw_object: mne.io.Raw, 
-                                title_prefix: str, tag: str, main_section_title: str, 
-                                status_update_prefix: str = ""):
-        """Helper function to compute and add a PSD plot to the report."""
+        html = f"""
+        <h2>Executive Summary</h2>
+        <p><strong>File:</strong> {filename}</p>
+        <p><strong>Processing Date:</strong> {np.datetime64('now')}</p>
+        <p><strong>Processing Steps Completed:</strong></p>
+        <ol>
+        """
+
+        for stage in stages:
+            html += f"<li>{stage}</li>"
+
+        html += """
+        </ol>
+        <p><strong>Key Results:</strong></p>
+        <ul>
+        """
+
+        # Add key metrics
+        if 'Original' in self.snr_log and 'Final' in self.snr_log:
+            orig_alpha = self.snr_log['Original']['alpha']['mean_snr']
+            final_alpha = self.snr_log['Final']['alpha']['mean_snr']
+            improvement = final_alpha - orig_alpha
+
+            html += f"<li>Alpha band SNR improvement: {improvement:+.2f} dB</li>"
+
+            # Count channels
+            if hasattr(self.processing_stages['Original'], 'info'):
+                n_channels = len(self.processing_stages['Original'].ch_names)
+                html += f"<li>Total channels processed: {n_channels}</li>"
+
+        html += "</ul>"
+        return html
+
+    def _create_snr_summary_table(self) -> str:
+        """Create SNR summary table HTML"""
+        if not self.snr_log:
+            return "<p>No SNR data available</p>"
+
+        bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
+        stages = list(self.snr_log.keys())
+
+        html = """
+        <style>
+            .snr-table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+            .snr-table th, .snr-table td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+            .snr-table th { background-color: #f2f2f2; font-weight: bold; }
+            .snr-table tr:nth-child(even) { background-color: #f9f9f9; }
+            .improvement { color: green; font-weight: bold; }
+            .degradation { color: red; font-weight: bold; }
+        </style>
+        <h3>Signal-to-Noise Ratio (SNR) by Frequency Band and Processing Stage</h3>
+        <table class="snr-table">
+        <tr>
+            <th>Stage</th>
+        """
+
+        # Add column headers for each band
+        for band in bands:
+            html += f"<th>{band.capitalize()} (dB)</th>"
+        html += "</tr>"
+
+        # Add rows for each stage
+        for stage in stages:
+            html += f"<tr><td><strong>{stage}</strong></td>"
+            for band in bands:
+                if band in self.snr_log[stage]:
+                    snr_val = self.snr_log[stage][band]['mean_snr']
+                    html += f"<td>{snr_val:.2f}</td>"
+                else:
+                    html += "<td>N/A</td>"
+            html += "</tr>"
+
+        # Add improvement row if we have Original and Final
+        if 'Original' in self.snr_log and 'Final' in self.snr_log:
+            html += "<tr><td><strong>Total Improvement</strong></td>"
+            for band in bands:
+                if band in self.snr_log['Original'] and band in self.snr_log['Final']:
+                    orig_val = self.snr_log['Original'][band]['mean_snr']
+                    final_val = self.snr_log['Final'][band]['mean_snr']
+                    improvement = final_val - orig_val
+
+                    css_class = 'improvement' if improvement > 0 else 'degradation' if improvement < 0 else ''
+                    html += f'<td class="{css_class}">{improvement:+.2f}</td>'
+                else:
+                    html += "<td>N/A</td>"
+            html += "</tr>"
+
+        html += "</table>"
+        return html
+
+    def _add_stage_to_report(self, report: mne.Report, stage_name: str, stage_raw: mne.io.Raw, section_title: str):
+        """Add a processing stage to the report with quality metrics"""
+        self.status_update.emit(f"Adding {stage_name} to report...")
+
+        # Add stage header
+        report.add_html(
+            f"<h2>{stage_name}</h2>", title=f"{stage_name} Header", section=section_title,
+            tags=(stage_name, "Header"))
+
+        # Add SNR metrics for this stage
+        if stage_name in self.snr_log:
+            snr_html = self._create_stage_snr_html(stage_name)
+            report.add_html(
+                snr_html, title=f"{stage_name} SNR Metrics", section=section_title, tags=(stage_name, "SNR"))
+
+        # Add PSD plot
         try:
-            self.status_update.emit(f"{status_update_prefix}Generating PSD: {title_prefix}...")
-            # Ensure data is loaded for PSD, operate on a copy to be safe
-            psd_plot_raw = raw_object.copy().load_data() 
-            
-            # Pick only EEG channels, excluding any marked as bad FOR THIS PSD PLOT
-            # This ensures PSD is computed on what's considered "good" at this stage for plotting purposes
-            # If all channels are bad or no EEG channels, it will be handled.
-            eeg_picks = mne.pick_types(psd_plot_raw.info, eeg=True, exclude=psd_plot_raw.info['bads'])
-            
-            if len(eeg_picks) == 0:
-                self.status_update.emit(f"Skipping PSD plot for '{title_prefix}': No good EEG channels found.")
-                report.add_html(f"<p><i>Skipping PSD plot for '{title_prefix}': No good EEG channels found.</i></p>", 
-                                title=f"Skipped PSD Plot Info: {tag}",
-                                section=main_section_title, tags=(tag, "info"))
-                return
-
-            fig_psd = psd_plot_raw.compute_psd(
-                fmin=1, fmax=80, n_fft=min(2048, int(psd_plot_raw.info['sfreq'])),
-                n_overlap=int(min(2048, int(psd_plot_raw.info['sfreq'])) / 2),
-                picks=eeg_picks).plot(show=False)
-            report.add_figure(fig_psd, title=title_prefix, section=main_section_title, tags=(tag, "psd"))
+            fig_psd = stage_raw.compute_psd(fmax=80, verbose=False).plot(show=False)
+            report.add_figure(fig_psd, title=f"PSD: {stage_name}", section=section_title, tags=(stage_name, "PSD"))
             plt.close(fig_psd)
-            self.status_update.emit(f"PSD for '{title_prefix}' added to report.")
         except Exception as e:
-            error_msg = f"Could not generate PSD plot for '{title_prefix}': {e}"
-            self.status_update.emit(error_msg)
-            report.add_html(f"<p style=\'color:red;\'>{error_msg}</p>", 
-                            title=f"PSD Plot Error: {tag}",
-                            section=main_section_title, tags=(tag, "error"))
+            self.status_update.emit(f"Could not create PSD for {stage_name}: {e}")
+
+        # Add data snippet
+        try:
+            report.add_raw(stage_raw, title=f"Data: {stage_name}", psd=False, tags=(stage_name, "Data"))
+        except Exception as e:
+            self.status_update.emit(f"Could not add data snippet for {stage_name}: {e}")
+
+    def _create_stage_snr_html(self, stage_name: str) -> str:
+        """Create HTML for SNR metrics of a specific stage"""
+        if stage_name not in self.snr_log:
+            return f"<p>No SNR data for {stage_name}</p>"
+
+        snr_data = self.snr_log[stage_name]
+
+        html = f"""
+        <h4>SNR Metrics for {stage_name}</h4>
+        <table style="border-collapse: collapse; margin: 10px 0;">
+        <tr>
+            <th style="border: 1px solid #ddd; padding: 5px;">Band</th>
+            <th style="border: 1px solid #ddd; padding: 5px;">Mean SNR (dB)</th>
+            <th style="border: 1px solid #ddd; padding: 5px;">Std Dev (dB)</th>
+        </tr>
+        """
+
+        for band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
+            if band in snr_data:
+                mean_snr = snr_data[band]['mean_snr']
+                std_snr = snr_data[band]['std_snr']
+                html += f"""
+                <tr>
+                    <td style="border: 1px solid #ddd; padding: 5px;">{band.capitalize()}</td>
+                    <td style="border: 1px solid #ddd; padding: 5px;">{mean_snr:.2f}</td>
+                    <td style="border: 1px solid #ddd; padding: 5px;">{std_snr:.2f}</td>
+                </tr>
+                """
+
+        html += "</table>"
+        return html
+
+    def _add_comparison_plots(self, report: mne.Report, section_title: str):
+        """Add comprehensive comparison plots to the report"""
+        self.status_update.emit("Creating comparison plots...")
+
+        # 1. SNR progression plot
+        try:
+            fig_snr = self._create_snr_progression_plot()
+            if fig_snr:
+                report.add_figure(
+                    fig_snr, title="SNR Progression Across Processing Steps", section=section_title,
+                    tags=("Comparison", "SNR"))
+                plt.close(fig_snr)
+        except Exception as e:
+            self.status_update.emit(f"Could not create SNR progression plot: {e}")
+
+        # 2. Before/After PSD comparison
+        try:
+            fig_psd_comp = self._create_psd_comparison_plot()
+            if fig_psd_comp:
+                report.add_figure(
+                    fig_psd_comp, title="PSD Comparison: Original vs Final", section=section_title,
+                    tags=("Comparison", "PSD"))
+                plt.close(fig_psd_comp)
+        except Exception as e:
+            self.status_update.emit(f"Could not create PSD comparison: {e}")
+
+    def _create_snr_progression_plot(self) -> Optional[Figure]:
+        """Create SNR progression plot"""
+        if not self.snr_log:
+            return None
+
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        axes = axes.flatten()
+
+        bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
+        stages = list(self.snr_log.keys())
+
+        for i, band in enumerate(bands):
+            if i < len(axes):
+                snr_values = []
+                valid_stages = []
+
+                for stage in stages:
+                    if band in self.snr_log[stage]:
+                        snr_values.append(self.snr_log[stage][band]['mean_snr'])
+                        valid_stages.append(stage)
+
+                if snr_values:
+                    axes[i].plot(range(len(valid_stages)), snr_values, 'o-', linewidth=2, markersize=8)
+                    axes[i].set_title(f'{band.capitalize()} Band SNR')
+                    axes[i].set_ylabel('SNR (dB)')
+                    axes[i].set_xticks(range(len(valid_stages)))
+                    axes[i].set_xticklabels(valid_stages, rotation=45, ha='right')
+                    axes[i].grid(True, alpha=0.3)
+
+                    # Add improvement annotation
+                    if len(snr_values) > 1:
+                        improvement = snr_values[-1] - snr_values[0]
+                        color = 'green' if improvement > 0 else 'red'
+                        axes[i].text(
+                            0.95, 0.95, f'Δ = {improvement:+.1f} dB',
+                            transform=axes[i].transAxes,
+                            ha='right', va='top',
+                            bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
+
+        # Remove empty subplot
+        if len(bands) < len(axes):
+            fig.delaxes(axes[-1])
+
+        fig.suptitle('Signal-to-Noise Ratio Progression Throughout Processing', fontsize=16)
+        plt.tight_layout()
+
+        return fig
+
+    def _create_psd_comparison_plot(self) -> Optional[Figure]:
+        """Create before/after PSD comparison plot"""
+        if 'Original' not in self.processing_stages or 'Final' not in self.processing_stages:
+            return None
+
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+
+        # Get PSDs
+        orig_raw = self.processing_stages['Original']
+        final_raw = self.processing_stages['Final']
+
+        # Plot Original PSD
+        psd_orig = orig_raw.compute_psd(fmax=80, verbose=False)
+        psd_orig_data = 10 * np.log10(psd_orig.get_data().mean(axis=0))
+        ax1.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2)
+        ax1.set_title('Original Data')
+        ax1.set_xlabel('Frequency (Hz)')
+        ax1.set_ylabel('Power (dB)')
+        ax1.grid(True, alpha=0.3)
+
+        # Plot Final PSD
+        psd_final = final_raw.compute_psd(fmax=80, verbose=False)
+        psd_final_data = 10 * np.log10(psd_final.get_data().mean(axis=0))
+        ax2.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2)
+        ax2.set_title('Final Processed Data')
+        ax2.set_xlabel('Frequency (Hz)')
+        ax2.set_ylabel('Power (dB)')
+        ax2.grid(True, alpha=0.3)
+
+        # Plot comparison
+        ax3.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2, label='Original', alpha=0.7)
+        ax3.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2, label='Final', alpha=0.7)
+        ax3.set_title('PSD Comparison')
+        ax3.set_xlabel('Frequency (Hz)')
+        ax3.set_ylabel('Power (dB)')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+
+        # Highlight frequency bands
+        for ax in [ax1, ax2, ax3]:
+            ax.axvspan(1, 4, alpha=0.1, color='purple', label='Delta' if ax == ax3 else '')
+            ax.axvspan(4, 8, alpha=0.1, color='blue', label='Theta' if ax == ax3 else '')
+            ax.axvspan(8, 13, alpha=0.1, color='green', label='Alpha' if ax == ax3 else '')
+            ax.axvspan(13, 30, alpha=0.1, color='orange', label='Beta' if ax == ax3 else '')
+            ax.axvspan(30, 80, alpha=0.1, color='red', label='Gamma' if ax == ax3 else '')
+
+        fig.suptitle('Power Spectral Density: Before and After Processing', fontsize=16)
+        plt.tight_layout()
+
+        return fig
 
 
 class CleanEEGController(QWidget):
@@ -1002,13 +1058,13 @@ class CleanEEGController(QWidget):
         """Get list of all available MNE montages"""
         # Get all available standard montages
         montages = []
-        
+
         # Try to get all montages by checking the montage module
         try:
             # Standard montages available in MNE
             standard_montages = [
                 'standard_1005',
-                'standard_1020', 
+                'standard_1020',
                 'standard_alphabetic',
                 'standard_postfixed',
                 'standard_prefixed',
@@ -1035,7 +1091,7 @@ class CleanEEGController(QWidget):
                 'artinis-brite23',
                 'brainproducts-RNP-BA-128',
             ]
-            
+
             # Test each montage to see if it's available
             for montage_name in standard_montages:
                 try:
@@ -1043,7 +1099,7 @@ class CleanEEGController(QWidget):
                     montages.append(montage_name)
                 except:
                     pass
-                    
+
         except Exception as e:
             self._log(f"Error getting montages: {str(e)}", is_error=True)
             # Fall back to known working montages
@@ -1057,9 +1113,9 @@ class CleanEEGController(QWidget):
                 'easycap-M1',
                 'easycap-M10',
             ]
-            
+
         return sorted(montages)
-    
+
     def _log(self, message: str, is_error: bool = False):
         """Display log message in the log line edit with appropriate color.
            Note: QLineEdit does not render HTML. This will color the entire text.
@@ -1070,7 +1126,7 @@ class CleanEEGController(QWidget):
         else:
             style_sheet += " color: green;"
         self.log_lineedit.setStyleSheet(style_sheet)
-        self.log_lineedit.setText(message) # Set plain text, HTML tags will not be rendered.
+        self.log_lineedit.setText(message)
 
     def _connect_signals(self):
         """Connect UI signals to slots"""
@@ -1088,7 +1144,7 @@ class CleanEEGController(QWidget):
         self.step2_ica_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self.step2_asr_checkbox.toggled.connect(self._update_preprocessing_options_state)
         self._setup_default_restoration()
-        
+
         # Connect montage selection change
         self.step2_template_montage_combobox.currentTextChanged.connect(self._on_montage_selection_changed_for_plot)
 
@@ -1105,12 +1161,12 @@ class CleanEEGController(QWidget):
 
         # Downsample
         self.step2_downsample_lineedit.setEnabled(self.step2_downsample_checkbox.isChecked())
-        
+
         # Line noise
         line_noise_enabled = self.step2_line_noise_checkbox.isChecked()
         self.line_50_radio.setEnabled(line_noise_enabled)
         self.line_60_radio.setEnabled(line_noise_enabled)
-        
+
         # ICA options
         ica_enabled = self.step2_ica_checkbox.isChecked()
         self.ica_method_combobox.setEnabled(ica_enabled)
@@ -1118,7 +1174,7 @@ class CleanEEGController(QWidget):
         self.eye_blink_checkbox.setEnabled(ica_enabled)
         self.heart_beat_checkbox.setEnabled(ica_enabled)
         self.others_checkbox.setEnabled(ica_enabled)
-        
+
         # ASR options
         asr_enabled = self.step2_asr_checkbox.isChecked()
         self.asr_calibration_lineedit.setEnabled(asr_enabled)
@@ -1270,11 +1326,11 @@ class CleanEEGController(QWidget):
             idx = self.loaded_selected_files_list.row(selected_items[0])
             self.current_file_path = self.loaded_files[idx]
             self.current_file_index = idx
-            
+
             # Log the selection and trigger montage display
             self._log(f"Selected: {Path(self.current_file_path).name}. Displaying montage...")
             self._load_info_and_display_montage(self.current_file_path)
-            
+
             # Update filename display safely (if the widget still exists for other purposes)
             if hasattr(self, 'vis_figure_compare_filename_lineedit'):
                 self.vis_figure_compare_filename_lineedit.setText(Path(self.current_file_path).name)
@@ -1283,7 +1339,7 @@ class CleanEEGController(QWidget):
             self.current_file_path = None
             self.current_file_index = -1
             self.current_raw_for_montage = None
-            self._create_montage_plot() # This will clear the plot area
+            self._create_montage_plot()
             self._log("File selection cleared. Montage view updated.")
             if hasattr(self, 'vis_figure_compare_filename_lineedit'):
                 self.vis_figure_compare_filename_lineedit.clear()
@@ -1396,12 +1452,14 @@ class CleanEEGController(QWidget):
     def _validate_preprocessing_inputs(self) -> bool:
         """Validate preprocessing input fields"""
         try:
-            # Validate highpass filter frequency
+            # Validate bandpass filter frequencies
             if self.step2_bp_filter_checkbox.isChecked():
                 hp_freq = float(self.step2_hp_filter_lineedit.text())
                 lp_freq = float(self.step2_lp_filter_lineedit.text())
                 if hp_freq <= 0 or lp_freq <= 0:
-                    raise ValueError("Filter frequency must be positive")
+                    raise ValueError("Filter frequencies must be positive")
+                if hp_freq >= lp_freq:
+                    raise ValueError("Highpass frequency must be less than lowpass frequency")
 
             # Validate downsample frequency
             if self.step2_downsample_checkbox.isChecked():
@@ -1471,6 +1529,8 @@ class CleanEEGController(QWidget):
             'remove_others': self.others_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
             'apply_asr': self.step2_asr_checkbox.isChecked(),
             'asr_cutoff': float(self.asr_cutoff_lineedit.text()) if self.step2_asr_checkbox.isChecked() else 5,
+            'asr_calibration':
+                float(self.asr_calibration_lineedit.text()) if self.step2_asr_checkbox.isChecked() else 60,
             'interpolate_bads': self.step2_interpolation_checkbox.isChecked(),
             'output_format': self._get_output_format(),
             'export_report':
@@ -1533,7 +1593,7 @@ class CleanEEGController(QWidget):
                            filename: str, processed_raw: mne.io.Raw):
         """Handle successful file processing"""
         self._log(f"Successfully processed: {filename}")
-        
+
         # Store processed data for comparison if it's the currently selected file
         if file_idx == self.current_file_index:
             # self.processed_raw = processed_raw # This attribute is being removed
@@ -1542,7 +1602,7 @@ class CleanEEGController(QWidget):
                 self.vis_figure_compare_filename_lineedit.setText(filename)
             # Switch to Data Inspection tab - this behavior might need review if tab content changed significantly
             self.new_study_tab_widget.setCurrentIndex(1)
-            
+
         # Process next file
         self._process_next_file(file_idx + 1, output_dir, settings)
 
@@ -1606,7 +1666,7 @@ def main():
     ui_file = "cleaneeg_interface.ui"
 
     controller = CleanEEGController(ui_file)
-    controller.setWindowTitle("CleanEEG GUI")
+    controller.setWindowTitle("CleanEEG GUI - Enhanced Edition")
     controller.showMaximized()
 
     sys.exit(app.exec_())
