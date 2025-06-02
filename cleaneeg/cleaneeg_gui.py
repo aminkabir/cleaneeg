@@ -630,8 +630,8 @@ class CleanEEGWorker(QThread):
         return str(output_file)
 
     def _generate_enhanced_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
-                                 bads_detected: List[str], original_filename: str,
-                                 input_base_dir_str: Optional[str] = None):
+                                  bads_detected: List[str], original_filename: str,
+                                  input_base_dir_str: Optional[str] = None):
         """Generates an enhanced HTML report with quality assessment metrics."""
         try:
             self.status_update.emit("Initializing enhanced report...")
@@ -640,21 +640,61 @@ class CleanEEGWorker(QThread):
 
             main_section_title = "EEG Preprocessing Pipeline with Quality Assessment"
 
+            # Ensure we have processing stages and SNR data
+            if not hasattr(self, 'processing_stages') or not self.processing_stages:
+                self.status_update.emit("Warning: No processing stages found, creating minimal report...")
+                # Create minimal processing stages
+                self.processing_stages = {
+                    'Original': raw_orig.copy(),
+                    'Final': raw_processed.copy()
+                }
+
+            if not hasattr(self, 'snr_log') or not self.snr_log:
+                self.status_update.emit("Computing SNR for report...")
+                # Compute SNR for available stages
+                self.snr_log = {}
+                for stage_name, stage_raw in self.processing_stages.items():
+                    try:
+                        self.snr_log[stage_name] = self.compute_snr(stage_raw)
+                    except Exception as e:
+                        self.status_update.emit(f"Could not compute SNR for {stage_name}: {e}")
+                        # Create dummy SNR data
+                        self.snr_log[stage_name] = {
+                            'alpha': {'mean_snr': 0.0, 'std_snr': 0.0},
+                            'beta': {'mean_snr': 0.0, 'std_snr': 0.0},
+                            'theta': {'mean_snr': 0.0, 'std_snr': 0.0},
+                            'delta': {'mean_snr': 0.0, 'std_snr': 0.0},
+                            'gamma': {'mean_snr': 0.0, 'std_snr': 0.0}
+                        }
+
             # Add comprehensive summary at the beginning
-            summary_html = self._create_summary_html(original_filename)
-            report.add_html(summary_html, title="Executive Summary", section=main_section_title, tags=("Summary",))
+            try:
+                summary_html = self._create_summary_html(original_filename)
+                report.add_html(summary_html, title="Executive Summary", section=main_section_title, tags=("Summary",))
+            except Exception as e:
+                self.status_update.emit(f"Could not create summary: {e}")
 
             # Add SNR improvement table
-            snr_table_html = self._create_snr_summary_table()
-            report.add_html(
-                snr_table_html, title="SNR Improvement Summary", section=main_section_title, tags=("SNR", "Summary"))
+            try:
+                snr_table_html = self._create_snr_summary_table()
+                report.add_html(
+                    snr_table_html, title="SNR Improvement Summary", section=main_section_title,
+                    tags=("SNR", "Summary"))
+            except Exception as e:
+                self.status_update.emit(f"Could not create SNR table: {e}")
 
             # Process each stage and add to report
             for stage_name, stage_raw in self.processing_stages.items():
-                self._add_stage_to_report(report, stage_name, stage_raw, main_section_title)
+                try:
+                    self._add_stage_to_report(report, stage_name, stage_raw, main_section_title)
+                except Exception as e:
+                    self.status_update.emit(f"Could not add stage {stage_name} to report: {e}")
 
             # Add overall comparison plots
-            self._add_comparison_plots(report, main_section_title)
+            try:
+                self._add_comparison_plots(report, main_section_title)
+            except Exception as e:
+                self.status_update.emit(f"Could not add comparison plots: {e}")
 
             # Save report
             original_filepath = Path(self.file_path)
@@ -687,12 +727,15 @@ class CleanEEGWorker(QThread):
 
     def _create_summary_html(self, filename: str) -> str:
         """Create executive summary HTML"""
-        stages = list(self.processing_stages.keys())
+        stages = list(self.processing_stages.keys()) if hasattr(self, 'processing_stages') else ['Original', 'Final']
+
+        # Get current date/time properly formatted
+        current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         html = f"""
         <h2>Executive Summary</h2>
         <p><strong>File:</strong> {filename}</p>
-        <p><strong>Processing Date:</strong> {np.datetime64('now')}</p>
+        <p><strong>Processing Date:</strong> {current_time}</p>
         <p><strong>Processing Steps Completed:</strong></p>
         <ol>
         """
@@ -706,25 +749,29 @@ class CleanEEGWorker(QThread):
         <ul>
         """
 
-        # Add key metrics
-        if 'Original' in self.snr_log and 'Final' in self.snr_log:
-            orig_alpha = self.snr_log['Original']['alpha']['mean_snr']
-            final_alpha = self.snr_log['Final']['alpha']['mean_snr']
-            improvement = final_alpha - orig_alpha
+        # Add key metrics safely
+        try:
+            if hasattr(self, 'snr_log') and self.snr_log and 'Original' in self.snr_log and 'Final' in self.snr_log:
+                orig_alpha = self.snr_log['Original']['alpha']['mean_snr']
+                final_alpha = self.snr_log['Final']['alpha']['mean_snr']
+                improvement = final_alpha - orig_alpha
+                html += f"<li>Alpha band SNR improvement: {improvement:+.2f} dB</li>"
+            else:
+                html += "<li>SNR data unavailable</li>"
 
-            html += f"<li>Alpha band SNR improvement: {improvement:+.2f} dB</li>"
-
-            # Count channels
-            if hasattr(self.processing_stages['Original'], 'info'):
+            # Count channels safely
+            if hasattr(self, 'processing_stages') and 'Original' in self.processing_stages:
                 n_channels = len(self.processing_stages['Original'].ch_names)
                 html += f"<li>Total channels processed: {n_channels}</li>"
+        except Exception as e:
+            html += f"<li>Error computing metrics: {str(e)}</li>"
 
         html += "</ul>"
         return html
 
     def _create_snr_summary_table(self) -> str:
         """Create SNR summary table HTML"""
-        if not self.snr_log:
+        if not hasattr(self, 'snr_log') or not self.snr_log:
             return "<p>No SNR data available</p>"
 
         bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
@@ -754,10 +801,16 @@ class CleanEEGWorker(QThread):
         for stage in stages:
             html += f"<tr><td><strong>{stage}</strong></td>"
             for band in bands:
-                if band in self.snr_log[stage]:
-                    snr_val = self.snr_log[stage][band]['mean_snr']
-                    html += f"<td>{snr_val:.2f}</td>"
-                else:
+                try:
+                    if band in self.snr_log[stage]:
+                        snr_val = self.snr_log[stage][band]['mean_snr']
+                        if isinstance(snr_val, (int, float)) and not np.isnan(snr_val):
+                            html += f"<td>{snr_val:.2f}</td>"
+                        else:
+                            html += "<td>N/A</td>"
+                    else:
+                        html += "<td>N/A</td>"
+                except (KeyError, TypeError, ValueError):
                     html += "<td>N/A</td>"
             html += "</tr>"
 
@@ -765,14 +818,21 @@ class CleanEEGWorker(QThread):
         if 'Original' in self.snr_log and 'Final' in self.snr_log:
             html += "<tr><td><strong>Total Improvement</strong></td>"
             for band in bands:
-                if band in self.snr_log['Original'] and band in self.snr_log['Final']:
-                    orig_val = self.snr_log['Original'][band]['mean_snr']
-                    final_val = self.snr_log['Final'][band]['mean_snr']
-                    improvement = final_val - orig_val
+                try:
+                    if (band in self.snr_log['Original'] and band in self.snr_log['Final']):
+                        orig_val = self.snr_log['Original'][band]['mean_snr']
+                        final_val = self.snr_log['Final'][band]['mean_snr']
 
-                    css_class = 'improvement' if improvement > 0 else 'degradation' if improvement < 0 else ''
-                    html += f'<td class="{css_class}">{improvement:+.2f}</td>'
-                else:
+                        if (isinstance(orig_val, (int, float)) and isinstance(final_val, (int, float)) and
+                                not np.isnan(orig_val) and not np.isnan(final_val)):
+                            improvement = final_val - orig_val
+                            css_class = 'improvement' if improvement > 0 else 'degradation' if improvement < 0 else ''
+                            html += f'<td class="{css_class}">{improvement:+.2f}</td>'
+                        else:
+                            html += "<td>N/A</td>"
+                    else:
+                        html += "<td>N/A</td>"
+                except (KeyError, TypeError, ValueError):
                     html += "<td>N/A</td>"
             html += "</tr>"
 
@@ -784,33 +844,61 @@ class CleanEEGWorker(QThread):
         self.status_update.emit(f"Adding {stage_name} to report...")
 
         # Add stage header
-        report.add_html(
-            f"<h2>{stage_name}</h2>", title=f"{stage_name} Header", section=section_title,
-            tags=(stage_name, "Header"))
+        try:
+            report.add_html(
+                f"<h2>{stage_name}</h2>", title=f"{stage_name} Header", section=section_title,
+                tags=(stage_name, "Header"))
+        except Exception as e:
+            self.status_update.emit(f"Could not add header for {stage_name}: {e}")
 
         # Add SNR metrics for this stage
-        if stage_name in self.snr_log:
-            snr_html = self._create_stage_snr_html(stage_name)
-            report.add_html(
-                snr_html, title=f"{stage_name} SNR Metrics", section=section_title, tags=(stage_name, "SNR"))
+        try:
+            if hasattr(self, 'snr_log') and stage_name in self.snr_log:
+                snr_html = self._create_stage_snr_html(stage_name)
+                report.add_html(
+                    snr_html, title=f"{stage_name} SNR Metrics", section=section_title, tags=(stage_name, "SNR"))
+        except Exception as e:
+            self.status_update.emit(f"Could not add SNR metrics for {stage_name}: {e}")
 
         # Add PSD plot
         try:
-            fig_psd = stage_raw.compute_psd(fmax=80, verbose=False).plot(show=False)
+            psd_computed = stage_raw.compute_psd(fmax=80, verbose=False)
+            fig_psd = psd_computed.plot(show=False, average=True, spatial_colors=False)
+            fig_psd.suptitle(f"PSD: {stage_name}")
             report.add_figure(fig_psd, title=f"PSD: {stage_name}", section=section_title, tags=(stage_name, "PSD"))
             plt.close(fig_psd)
         except Exception as e:
             self.status_update.emit(f"Could not create PSD for {stage_name}: {e}")
 
-        # Add data snippet
+        # Add data snippet (simplified to avoid potential issues)
         try:
-            report.add_raw(stage_raw, title=f"Data: {stage_name}", psd=False, tags=(stage_name, "Data"))
+            # Create a simple data plot instead of using add_raw which can be problematic
+            fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+
+            # Plot first 10 seconds of data from first 10 channels
+            n_channels = min(10, len(stage_raw.ch_names))
+            n_times = min(int(10 * stage_raw.info['sfreq']), stage_raw.n_times)
+
+            data_snippet = stage_raw.get_data()[:n_channels, :n_times]
+            times_snippet = stage_raw.times[:n_times]
+
+            for i in range(n_channels):
+                ax.plot(times_snippet, data_snippet[i] + i * 100e-6, linewidth=0.5)
+
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel('Amplitude (V)')
+            ax.set_title(f"Data Sample: {stage_name} (first {n_channels} channels, 10s)")
+            ax.grid(True, alpha=0.3)
+
+            report.add_figure(fig, title=f"Data Sample: {stage_name}", section=section_title, tags=(stage_name, "Data"))
+            plt.close(fig)
+
         except Exception as e:
             self.status_update.emit(f"Could not add data snippet for {stage_name}: {e}")
 
     def _create_stage_snr_html(self, stage_name: str) -> str:
         """Create HTML for SNR metrics of a specific stage"""
-        if stage_name not in self.snr_log:
+        if not hasattr(self, 'snr_log') or stage_name not in self.snr_log:
             return f"<p>No SNR data for {stage_name}</p>"
 
         snr_data = self.snr_log[stage_name]
@@ -826,14 +914,43 @@ class CleanEEGWorker(QThread):
         """
 
         for band in ['delta', 'theta', 'alpha', 'beta', 'gamma']:
-            if band in snr_data:
-                mean_snr = snr_data[band]['mean_snr']
-                std_snr = snr_data[band]['std_snr']
+            try:
+                if band in snr_data:
+                    mean_snr = snr_data[band]['mean_snr']
+                    std_snr = snr_data[band]['std_snr']
+
+                    # Check if values are valid numbers
+                    if isinstance(mean_snr, (int, float)) and isinstance(std_snr, (int, float)):
+                        if not (np.isnan(mean_snr) or np.isnan(std_snr)):
+                            html += f"""
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 5px;">{band.capitalize()}</td>
+                                <td style="border: 1px solid #ddd; padding: 5px;">{mean_snr:.2f}</td>
+                                <td style="border: 1px solid #ddd; padding: 5px;">{std_snr:.2f}</td>
+                            </tr>
+                            """
+                        else:
+                            html += f"""
+                            <tr>
+                                <td style="border: 1px solid #ddd; padding: 5px;">{band.capitalize()}</td>
+                                <td style="border: 1px solid #ddd; padding: 5px;">N/A</td>
+                                <td style="border: 1px solid #ddd; padding: 5px;">N/A</td>
+                            </tr>
+                            """
+                    else:
+                        html += f"""
+                        <tr>
+                            <td style="border: 1px solid #ddd; padding: 5px;">{band.capitalize()}</td>
+                            <td style="border: 1px solid #ddd; padding: 5px;">N/A</td>
+                            <td style="border: 1px solid #ddd; padding: 5px;">N/A</td>
+                        </tr>
+                        """
+            except (KeyError, TypeError, ValueError):
                 html += f"""
                 <tr>
                     <td style="border: 1px solid #ddd; padding: 5px;">{band.capitalize()}</td>
-                    <td style="border: 1px solid #ddd; padding: 5px;">{mean_snr:.2f}</td>
-                    <td style="border: 1px solid #ddd; padding: 5px;">{std_snr:.2f}</td>
+                    <td style="border: 1px solid #ddd; padding: 5px;">Error</td>
+                    <td style="border: 1px solid #ddd; padding: 5px;">Error</td>
                 </tr>
                 """
 
@@ -868,35 +985,40 @@ class CleanEEGWorker(QThread):
 
     def _create_snr_progression_plot(self) -> Optional[Figure]:
         """Create SNR progression plot"""
-        if not self.snr_log:
+        if not hasattr(self, 'snr_log') or not self.snr_log:
             return None
 
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
-        axes = axes.flatten()
+        try:
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            axes = axes.flatten()
 
-        bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
-        stages = list(self.snr_log.keys())
+            bands = ['delta', 'theta', 'alpha', 'beta', 'gamma']
+            stages = list(self.snr_log.keys())
 
-        for i, band in enumerate(bands):
-            if i < len(axes):
-                snr_values = []
-                valid_stages = []
+            for i, band in enumerate(bands):
+                if i < len(axes):
+                    snr_values = []
+                    valid_stages = []
 
-                for stage in stages:
-                    if band in self.snr_log[stage]:
-                        snr_values.append(self.snr_log[stage][band]['mean_snr'])
-                        valid_stages.append(stage)
+                    for stage in stages:
+                        try:
+                            if band in self.snr_log[stage]:
+                                mean_snr = self.snr_log[stage][band]['mean_snr']
+                                if isinstance(mean_snr, (int, float)) and not np.isnan(mean_snr):
+                                    snr_values.append(mean_snr)
+                                    valid_stages.append(stage)
+                        except (KeyError, TypeError):
+                            continue
 
-                if snr_values:
-                    axes[i].plot(range(len(valid_stages)), snr_values, 'o-', linewidth=2, markersize=8)
-                    axes[i].set_title(f'{band.capitalize()} Band SNR')
-                    axes[i].set_ylabel('SNR (dB)')
-                    axes[i].set_xticks(range(len(valid_stages)))
-                    axes[i].set_xticklabels(valid_stages, rotation=45, ha='right')
-                    axes[i].grid(True, alpha=0.3)
+                    if snr_values and len(snr_values) > 1:
+                        axes[i].plot(range(len(valid_stages)), snr_values, 'o-', linewidth=2, markersize=8)
+                        axes[i].set_title(f'{band.capitalize()} Band SNR')
+                        axes[i].set_ylabel('SNR (dB)')
+                        axes[i].set_xticks(range(len(valid_stages)))
+                        axes[i].set_xticklabels(valid_stages, rotation=45, ha='right')
+                        axes[i].grid(True, alpha=0.3)
 
-                    # Add improvement annotation
-                    if len(snr_values) > 1:
+                        # Add improvement annotation
                         improvement = snr_values[-1] - snr_values[0]
                         color = 'green' if improvement > 0 else 'red'
                         axes[i].text(
@@ -904,66 +1026,89 @@ class CleanEEGWorker(QThread):
                             transform=axes[i].transAxes,
                             ha='right', va='top',
                             bbox=dict(boxstyle='round', facecolor=color, alpha=0.3))
+                    else:
+                        axes[i].text(0.5, 0.5, 'No valid data', transform=axes[i].transAxes, ha='center')
+                        axes[i].set_title(f'{band.capitalize()} Band SNR')
 
-        # Remove empty subplot
-        if len(bands) < len(axes):
-            fig.delaxes(axes[-1])
+            # Remove empty subplot
+            if len(bands) < len(axes):
+                fig.delaxes(axes[-1])
 
-        fig.suptitle('Signal-to-Noise Ratio Progression Throughout Processing', fontsize=16)
-        plt.tight_layout()
+            fig.suptitle('Signal-to-Noise Ratio Progression Throughout Processing', fontsize=16)
+            plt.tight_layout()
 
-        return fig
+            return fig
+
+        except Exception as e:
+            self.status_update.emit(f"Error creating SNR progression plot: {e}")
+            return None
 
     def _create_psd_comparison_plot(self) -> Optional[Figure]:
         """Create before/after PSD comparison plot"""
-        if 'Original' not in self.processing_stages or 'Final' not in self.processing_stages:
+        if not hasattr(self, 'processing_stages') or not self.processing_stages:
             return None
 
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
+        if 'Original' not in self.processing_stages or 'Final' not in self.processing_stages:
+            # Use first and last available stages
+            stage_names = list(self.processing_stages.keys())
+            if len(stage_names) < 2:
+                return None
+            first_stage = stage_names[0]
+            last_stage = stage_names[-1]
+        else:
+            first_stage = 'Original'
+            last_stage = 'Final'
 
-        # Get PSDs
-        orig_raw = self.processing_stages['Original']
-        final_raw = self.processing_stages['Final']
+        try:
+            fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
-        # Plot Original PSD
-        psd_orig = orig_raw.compute_psd(fmax=80, verbose=False)
-        psd_orig_data = 10 * np.log10(psd_orig.get_data().mean(axis=0))
-        ax1.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2)
-        ax1.set_title('Original Data')
-        ax1.set_xlabel('Frequency (Hz)')
-        ax1.set_ylabel('Power (dB)')
-        ax1.grid(True, alpha=0.3)
+            # Get PSDs
+            orig_raw = self.processing_stages[first_stage]
+            final_raw = self.processing_stages[last_stage]
 
-        # Plot Final PSD
-        psd_final = final_raw.compute_psd(fmax=80, verbose=False)
-        psd_final_data = 10 * np.log10(psd_final.get_data().mean(axis=0))
-        ax2.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2)
-        ax2.set_title('Final Processed Data')
-        ax2.set_xlabel('Frequency (Hz)')
-        ax2.set_ylabel('Power (dB)')
-        ax2.grid(True, alpha=0.3)
+            # Plot Original PSD
+            psd_orig = orig_raw.compute_psd(fmax=80, verbose=False)
+            psd_orig_data = 10 * np.log10(psd_orig.get_data().mean(axis=0) + 1e-12)
+            ax1.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2)
+            ax1.set_title(f'{first_stage} Data')
+            ax1.set_xlabel('Frequency (Hz)')
+            ax1.set_ylabel('Power (dB)')
+            ax1.grid(True, alpha=0.3)
 
-        # Plot comparison
-        ax3.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2, label='Original', alpha=0.7)
-        ax3.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2, label='Final', alpha=0.7)
-        ax3.set_title('PSD Comparison')
-        ax3.set_xlabel('Frequency (Hz)')
-        ax3.set_ylabel('Power (dB)')
-        ax3.legend()
-        ax3.grid(True, alpha=0.3)
+            # Plot Final PSD
+            psd_final = final_raw.compute_psd(fmax=80, verbose=False)
+            psd_final_data = 10 * np.log10(psd_final.get_data().mean(axis=0) + 1e-12)
+            ax2.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2)
+            ax2.set_title(f'{last_stage} Processed Data')
+            ax2.set_xlabel('Frequency (Hz)')
+            ax2.set_ylabel('Power (dB)')
+            ax2.grid(True, alpha=0.3)
 
-        # Highlight frequency bands
-        for ax in [ax1, ax2, ax3]:
-            ax.axvspan(1, 4, alpha=0.1, color='purple', label='Delta' if ax == ax3 else '')
-            ax.axvspan(4, 8, alpha=0.1, color='blue', label='Theta' if ax == ax3 else '')
-            ax.axvspan(8, 13, alpha=0.1, color='green', label='Alpha' if ax == ax3 else '')
-            ax.axvspan(13, 30, alpha=0.1, color='orange', label='Beta' if ax == ax3 else '')
-            ax.axvspan(30, 80, alpha=0.1, color='red', label='Gamma' if ax == ax3 else '')
+            # Plot comparison
+            ax3.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2, label=first_stage, alpha=0.7)
+            ax3.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2, label=last_stage, alpha=0.7)
+            ax3.set_title('PSD Comparison')
+            ax3.set_xlabel('Frequency (Hz)')
+            ax3.set_ylabel('Power (dB)')
+            ax3.legend()
+            ax3.grid(True, alpha=0.3)
 
-        fig.suptitle('Power Spectral Density: Before and After Processing', fontsize=16)
-        plt.tight_layout()
+            # Highlight frequency bands
+            for ax in [ax1, ax2, ax3]:
+                ax.axvspan(1, 4, alpha=0.1, color='purple')
+                ax.axvspan(4, 8, alpha=0.1, color='blue')
+                ax.axvspan(8, 13, alpha=0.1, color='green')
+                ax.axvspan(13, 30, alpha=0.1, color='orange')
+                ax.axvspan(30, 80, alpha=0.1, color='red')
 
-        return fig
+            fig.suptitle('Power Spectral Density: Before and After Processing', fontsize=16)
+            plt.tight_layout()
+
+            return fig
+
+        except Exception as e:
+            self.status_update.emit(f"Error creating PSD comparison plot: {e}")
+            return None
 
 
 class CleanEEGController(QWidget):
