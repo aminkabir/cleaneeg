@@ -5,6 +5,64 @@
 
 Built on the resting-state EEG preprocessing pipeline proposed by DISCOVER-EEG[^1]—a peer-reviewed, standardized framework originally implemented in MATLAB—this Python implementation ensures reproducible, publication-ready results that align with established best practices in EEG research.
 
+## Installation
+
+Below are two ways to set up a new environment and install all required dependencies: using pip (with a virtual environment) or conda.
+
+-  Clone or download the CleanEEG repository and navigate into it:
+
+```
+git clone https://github.com/aminkabir/cleaneeg
+cd cleaneeg
+```
+
+### Using pip (Python’s built-in venv)
+
+- Create and activate a virtual environment:
+
+```
+# Create a new virtual environment named "cleaneeg"
+python3 -m venv cleaneeg
+
+# Activate the environment
+# On Linux/macOS:
+source cleaneeg/bin/activate
+# On Windows (PowerShell):
+.\cleaneeg\Scripts\Activate.ps1
+# On Windows (cmd.exe):
+# .\cleaneeg\Scripts\activate.bat
+```
+
+- Install all required packages from requirements.txt:
+
+```
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Using conda
+
+- Create and activate a new conda environment from environment.yml:
+
+```
+conda env create -f environment.yml
+conda activate cleaneeg
+```
+
+### Launch the GUI:
+
+- Navigate into the CleanEEG directory (if not already there):
+
+```
+cd cleaneeg
+```
+
+- Launch the GUI:
+
+```
+python cleaneeg_gui.py
+```
+
 ## Step-by-Step Usage
 
 ### 1. Load EEG Data
@@ -15,7 +73,7 @@ Built on the resting-state EEG preprocessing pipeline proposed by DISCOVER-EEG[^
   - "Find EEG Data with Specific Naming Convention" - filter by filename pattern
 - Click "Import Data"[^2]
 
-### 2. Configure Montage (Optional)
+### 2. Configure Montage
 - Select standard montage from dropdown (e.g., standard_1020)
 - Or choose "Use Custom Montage" and load your own channel location file
 - Preview appears in the right panel when you select a file
@@ -48,6 +106,20 @@ Check/uncheck the desired preprocessing options:
 - Click "Auto-Clean All Resting-State EEG"
 - Monitor progress in the status bar
 - Check log messages for real-time updates
+
+## cleaneeg_tutorial.ipynb
+
+For users new to EEG preprocessing or CleanEEG, open cleaneeg_tutorial.ipynb in Jupyter Notebook or JupyterLab. This tutorial provides:
+
+- Background on preprocessing steps.
+
+- Code examples illustrating each step (loading data, filtering, ICA, etc.).
+
+- Best practices for artifact detection and removal.
+
+- Exporting and inspecting cleaned data.
+
+Running through the notebook ensures you understand how CleanEEG processes resting-state EEG and how to adjust parameters for your specific dataset.
 
 ### References:
 
