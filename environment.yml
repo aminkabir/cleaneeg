@@ -1,23 +1,22 @@
 name: cleaneeg
 channels:
-  - defaults
   - conda-forge
+  - defaults
+
 dependencies:
   - python=3.10
-  - pip
+  - numpy>=2.0.0
+  - scipy>=1.10,<2.0
+  - matplotlib>=3.8,<4.0
+  - pyqt>=5.15,<6.0
+  - mne=1.5.0
+  - mne-icalabel=0.5.0
+  - pyprep>=0.4.0
+  - meegkit>=0.1.9
+  - pybv>=0.7.0
+  - h5py>=3.7.0
+  - pandas>=1.5,<3.0
   - pip:
-    - numpy==1.26.4
-    - scipy>=1.10.0
-    - matplotlib>=3.6.0
-    - PyQt5>=5.15.0
-    - mne==1.5.0
-    - mne-icalabel==0.5.0
-    - pyriemann==0.3
-    - pyprep>=0.4.0
-    - meegkit>=0.1.5
-    - pybv>=0.7.0
     - eeglabio>=0.0.2
     - edfio>=0.1.0
     - EDFlib-Python>=1.0.8
-    - h5py>=3.7.0
-    - pandas>=1.5.0
