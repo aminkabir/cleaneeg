@@ -45,6 +45,7 @@ pip install -r requirements.txt
 - Create and activate a new conda environment from environment.yml:
 
 ```
+conda update conda
 conda env create -f environment.yml
 conda activate cleaneeg
 ```
