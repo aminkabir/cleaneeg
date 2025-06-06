@@ -16,6 +16,7 @@ dependencies:
   - pybv>=0.7.0
   - h5py>=3.7.0
   - pandas>=1.5,<3.0
+  - pip
   - pip:
     - eeglabio>=0.0.2
     - edfio>=0.1.0
