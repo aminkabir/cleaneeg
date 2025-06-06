@@ -3,7 +3,7 @@ scipy            >=1.10,<2.0
 matplotlib       >=3.8,<4.0
 PyQt5            >=5.15,<6.0
 mne              ==1.5.0
-mne-icalabel     ==0.5.0
+mne-icalabel     ==0.7.0
 pyprep           >=0.4.0
 meegkit          >=0.1.9
 pybv             >=0.7.0
