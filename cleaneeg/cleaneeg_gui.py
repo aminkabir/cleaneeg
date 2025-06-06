@@ -4,13 +4,13 @@ CleanEEG - Automated Python-based Resting-State EEG Preprocessing GUI
 Author: Amin Kabir
 """
 
+import datetime
 import sys
 import os
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 import numpy as np
-from PyQt5.QtWidgets import (QApplication, QWidget, QFileDialog,
-                             QMessageBox, QListWidgetItem, QLabel, QPushButton, QVBoxLayout)
+from PyQt5.QtWidgets import QApplication, QWidget, QFileDialog, QMessageBox, QListWidgetItem, QVBoxLayout
 from PyQt5.QtCore import QThread, pyqtSignal, pyqtSlot, QObject, QTimer
 from PyQt5.QtGui import QDoubleValidator, QIntValidator
 from PyQt5 import uic
@@ -1476,9 +1476,6 @@ class CleanEEGController(QWidget):
             self._log(f"Selected: {Path(self.current_file_path).name}. Displaying montage...")
             self._load_info_and_display_montage(self.current_file_path)
 
-            # Update filename display safely (if the widget still exists for other purposes)
-            if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-                self.vis_figure_compare_filename_lineedit.setText(Path(self.current_file_path).name)
         else:
             # No file selected, clear montage and related info
             self.current_file_path = None
@@ -1486,8 +1483,6 @@ class CleanEEGController(QWidget):
             self.current_raw_for_montage = None
             self._create_montage_plot()
             self._log("File selection cleared. Montage view updated.")
-            if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-                self.vis_figure_compare_filename_lineedit.clear()
 
     def _load_raw_info_only(self, file_path: str) -> Optional[mne.io.Raw]:
         """Load only the header/info of an EEG file without preloading data."""
@@ -1739,15 +1734,6 @@ class CleanEEGController(QWidget):
         """Handle successful file processing"""
         self._log(f"Successfully processed: {filename}")
 
-        # Store processed data for comparison if it's the currently selected file
-        if file_idx == self.current_file_index:
-            # self.processed_raw = processed_raw # This attribute is being removed
-            # Update filename display (if it exists)
-            if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-                self.vis_figure_compare_filename_lineedit.setText(filename)
-            # Switch to Data Inspection tab - this behavior might need review if tab content changed significantly
-            self.new_study_tab_widget.setCurrentIndex(1)
-
         # Process next file
         self._process_next_file(file_idx + 1, output_dir, settings)
 
@@ -1784,8 +1770,7 @@ class CleanEEGController(QWidget):
                     self.current_file_index = -1
                     self.current_raw_for_montage = None
                     self._create_montage_plot()
-                    if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-                        self.vis_figure_compare_filename_lineedit.clear()
+
             else:
                 self._log("Error: Could not remove selected file, index out of range.", is_error=True)
         else:
@@ -1800,8 +1785,6 @@ class CleanEEGController(QWidget):
         self.current_file_index = -1
         self.current_raw_for_montage = None
         self._create_montage_plot()
-        if hasattr(self, 'vis_figure_compare_filename_lineedit'):
-            self.vis_figure_compare_filename_lineedit.clear()
 
 
 def main():
