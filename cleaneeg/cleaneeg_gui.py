@@ -374,11 +374,11 @@ class CleanEEGWorker(QThread):
 
             # Generate and save report if requested
             if self.settings.get('export_report'):
-                self.status_update.emit("Generating enhanced HTML report...")
-                self._generate_enhanced_report(
+                self.status_update.emit("Generating HTML report...")
+                self._generate_report(
                     raw_original_for_report, raw_clean, bads_before_processing, filename,
                     self.settings.get('input_base_dir'))
-                self.status_update.emit("Enhanced HTML report generated.")
+                self.status_update.emit("HTML report generated.")
 
             self.progress_update.emit(100)
             self.processing_complete.emit(filename, raw_clean)
@@ -629,13 +629,13 @@ class CleanEEGWorker(QThread):
 
         return str(output_file)
 
-    def _generate_enhanced_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
+    def _generate_report(self, raw_orig: mne.io.Raw, raw_processed: mne.io.Raw,
                                   bads_detected: List[str], original_filename: str,
                                   input_base_dir_str: Optional[str] = None):
-        """Generates an enhanced HTML report with quality assessment metrics."""
+        """Generates an HTML report with quality assessment metrics."""
         try:
-            self.status_update.emit("Initializing enhanced report...")
-            report_title = f"Enhanced Preprocessing Report for {original_filename}"
+            self.status_update.emit("Initializing report...")
+            report_title = f"Preprocessing Report for {original_filename}"
             report = mne.Report(title=report_title, verbose=False)
 
             main_section_title = "EEG Preprocessing Pipeline with Quality Assessment"
@@ -709,12 +709,12 @@ class CleanEEGWorker(QThread):
                 target_report_dir = Path(self.output_path)
 
             target_report_dir.mkdir(parents=True, exist_ok=True)
-            report_filename = target_report_dir / f"{Path(original_filename).stem}_enhanced_report.html"
+            report_filename = target_report_dir / f"{Path(original_filename).stem}_report.html"
 
-            self.status_update.emit(f"Saving enhanced report to: {str(report_filename)}")
+            self.status_update.emit(f"Saving report to: {str(report_filename)}")
             try:
                 report.save(str(report_filename), overwrite=True, open_browser=False)
-                self.status_update.emit(f"Enhanced report successfully saved to {report_filename}")
+                self.status_update.emit(f"Report successfully saved to {report_filename}")
             except Exception as e_save:
                 save_err_msg = f"Failed to save report to {report_filename}. Error: {e_save}"
                 self.status_update.emit(save_err_msg)
@@ -1699,6 +1699,7 @@ class CleanEEGController(QWidget):
         """Process the next file in the queue"""
         if file_idx >= len(self.loaded_files):
             # All files processed
+            self._cleanup_current_thread()
             self.preprocess_progressbar.setValue(100)
             self.step2_preprocess_data_button.setEnabled(True)
             message = "All files processed successfully!"
@@ -1709,6 +1710,9 @@ class CleanEEGController(QWidget):
         # Update overall progress
         overall_progress = int((file_idx / len(self.loaded_files)) * 100)
         self.preprocess_progressbar.setValue(overall_progress)
+
+        # Clean up any existing thread before creating a new one
+        self._cleanup_current_thread()
 
         # Create worker thread
         file_path = self.loaded_files[file_idx]
@@ -1728,12 +1732,40 @@ class CleanEEGController(QWidget):
         # Start processing
         self.processing_thread.start()
 
+    def _cleanup_current_thread(self):
+        """Clean up the current processing thread properly"""
+        if self.processing_thread is not None:
+            # Disconnect all signals to prevent issues
+            try:
+                self.processing_thread.status_update.disconnect()
+                self.processing_thread.processing_complete.disconnect()
+                self.processing_thread.processing_error.disconnect()
+            except TypeError:
+                # Signals may already be disconnected, ignore the error
+                pass
+            
+            # Wait for thread to finish if it's still running
+            if self.processing_thread.isRunning():
+                self.processing_thread.wait(5000)  # Wait up to 5 seconds
+                
+            # If thread is still running after wait, terminate it
+            if self.processing_thread.isRunning():
+                self.processing_thread.terminate()
+                self.processing_thread.wait(2000)  # Wait for termination
+            
+            # Delete the thread object
+            self.processing_thread.deleteLater()
+            self.processing_thread = None
+
     @pyqtSlot(str, object)
     def _on_file_processed(self, file_idx: int, output_dir: str, settings: Dict[str, Any],
                            filename: str, processed_raw: mne.io.Raw):
         """Handle successful file processing"""
         self._log(f"Successfully processed: {filename}")
 
+        # Clean up current thread before processing next file
+        self._cleanup_current_thread()
+        
         # Process next file
         self._process_next_file(file_idx + 1, output_dir, settings)
 
@@ -1743,6 +1775,10 @@ class CleanEEGController(QWidget):
         full_error = f"Error processing {filename}: {error_msg}"
         self._log(full_error, is_error=True)
         QMessageBox.critical(self, "Processing Error", full_error)
+        
+        # Clean up current thread
+        self._cleanup_current_thread()
+        
         self.step2_preprocess_data_button.setEnabled(True)
         self.preprocess_progressbar.setValue(0)
 
@@ -1776,6 +1812,11 @@ class CleanEEGController(QWidget):
         else:
             self._log("No file selected to remove.", is_error=True)
 
+    def closeEvent(self, event):
+        """Override closeEvent to ensure proper thread cleanup"""
+        self._cleanup_current_thread()
+        super().closeEvent(event)
+
     @pyqtSlot()
     def _clear_all_files(self):
         """Clear all loaded files"""
@@ -1787,14 +1828,46 @@ class CleanEEGController(QWidget):
         self._create_montage_plot()
 
 
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except AttributeError:
+        # Normal Python execution
+        base_path = os.path.abspath(".")
+    
+    return os.path.join(base_path, relative_path)
+
+
 def main():
     app = QApplication(sys.argv)
 
-    # Assuming the UI file is in the same directory
-    ui_file = "cleaneeg_interface.ui"
+    # Get the correct path to the UI file for both development and PyInstaller
+    ui_file = get_resource_path("cleaneeg_interface.ui")
+    
+    # Fallback to original location if not found in PyInstaller bundle
+    if not os.path.exists(ui_file):
+        ui_file = os.path.join(os.path.dirname(__file__), "cleaneeg_interface.ui")
+    
+    # Final fallback for development environment
+    if not os.path.exists(ui_file):
+        ui_file = "cleaneeg/cleaneeg_interface.ui"
+    
+    # Verify UI file exists before proceeding
+    if not os.path.exists(ui_file):
+        print(f"ERROR: UI file not found at any of the expected locations:")
+        print(f"  - {get_resource_path('cleaneeg_interface.ui')}")
+        print(f"  - {os.path.join(os.path.dirname(__file__), 'cleaneeg_interface.ui')}")
+        print(f"  - cleaneeg/cleaneeg_interface.ui")
+        print(f"Current working directory: {os.getcwd()}")
+        if hasattr(sys, '_MEIPASS'):
+            print(f"PyInstaller temp dir: {sys._MEIPASS}")
+            print(f"Files in temp dir: {os.listdir(sys._MEIPASS)}")
+        sys.exit(1)
 
     controller = CleanEEGController(ui_file)
-    controller.setWindowTitle("CleanEEG GUI - Enhanced Edition")
+    controller.setWindowTitle("CleanEEG GUI - by Amin Kabir")
     controller.showMaximized()
 
     sys.exit(app.exec_())
