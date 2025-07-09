@@ -530,7 +530,10 @@ class CleanEEGWorker(QThread):
     def _apply_ica(raw: mne.io.Raw, settings: Dict[str, Any]) -> Tuple[mne.io.Raw, ICA]:
         """Apply ICA and remove artifacts"""
         ica_method = settings.get('ica_method', 'fastica')
-        ica = ICA(n_components=None, random_state=97, method=ica_method)
+        if ica_method == 'infomax':
+            ica = ICA(n_components=None, random_state=97, method=ica_method, fit_params=dict(extended=True))
+        else:
+            ica = ICA(n_components=None, random_state=97, method=ica_method)
         ica.fit(raw)
 
         # Use ICLabel to classify components
