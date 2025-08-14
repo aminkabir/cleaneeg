@@ -1167,6 +1167,9 @@ class CleanEEGController(QWidget):
 
         # Clear log line edit
         self.log_lineedit.clear()
+        
+        # Initialize montage controls state
+        self._update_montage_controls_state()
 
     def _setup_default_restoration(self):
         """Setup default value restoration for line edits"""
@@ -1295,6 +1298,13 @@ class CleanEEGController(QWidget):
 
         # Connect montage selection change
         self.step2_template_montage_combobox.currentTextChanged.connect(self._on_montage_selection_changed_for_plot)
+        
+        # Connect montage radio buttons
+        self.step2_use_template_montage_radio.toggled.connect(self._on_montage_type_changed)
+        self.step2_load_montage_radio.toggled.connect(self._on_montage_type_changed)
+        
+        # Add browse button functionality for custom montage
+        self.step2_browse_montage_button.clicked.connect(self._browse_custom_montage)
 
         # File list management
         self.loaded_selected_files_list.itemSelectionChanged.connect(self._on_file_selection_changed)
@@ -1549,15 +1559,55 @@ class CleanEEGController(QWidget):
 
         self.montage_plot_widget = MNEPlotWidget(parent=self)  # Create fresh widget
 
-        # Get selected montage
-        montage_name = self.step2_template_montage_combobox.currentText()
-
+        # Determine montage type and settings
+        use_template = self.step2_use_template_montage_radio.isChecked()
+        use_custom = self.step2_load_montage_radio.isChecked()
+        
         try:
-            self._log(f"Setting montage: {montage_name} for display.")
-
             raw_for_plot = self.current_raw_for_montage.copy()
-            montage = mne.channels.make_standard_montage(montage_name)
-            raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
+            montage_applied = False
+            
+            if use_template:
+                montage_name = self.step2_template_montage_combobox.currentText()
+                self._log(f"Setting template montage: {montage_name} for display.")
+                montage = mne.channels.make_standard_montage(montage_name)
+                raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
+                montage_applied = True
+                
+            elif use_custom:
+                custom_path = self.step2_chanloc_path_lineedit.text().strip()
+                if custom_path and os.path.exists(custom_path):
+                    self._log(f"Setting custom montage: {Path(custom_path).name} for display.")
+                    try:
+                        # Try to read custom montage using the worker methods
+                        file_ext = Path(custom_path).suffix.lower()
+                        if file_ext == '.mat':
+                            ch_pos_dict = CleanEEGWorker._read_mat_locations(custom_path)
+                            ch_pos_dict_str = {str(k): v for k, v in ch_pos_dict.items()}
+                            montage = mne.channels.make_dig_montage(ch_pos=ch_pos_dict_str, coord_frame='head')
+                        elif file_ext in ['.ced', '.csd']:
+                            ch_pos_dict = CleanEEGWorker._read_ced_locations(custom_path)
+                            ch_pos_dict_str = {str(k): v for k, v in ch_pos_dict.items()}
+                            montage = mne.channels.make_dig_montage(ch_pos=ch_pos_dict_str, coord_frame='head')
+                        else:
+                            # Try MNE's built-in reader for other formats
+                            montage = mne.channels.read_custom_montage(custom_path)
+                        
+                        raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
+                        montage_applied = True
+                        
+                    except Exception as e:
+                        self._log(f"Error loading custom montage: {str(e)}", is_error=True)
+                        montage_applied = False
+                else:
+                    self._log("No custom montage file selected or file not found.", is_error=True)
+                    montage_applied = False
+            
+            if not montage_applied:
+                # Fall back to a default template montage for display
+                self._log("Falling back to default montage for display.")
+                montage = mne.channels.make_standard_montage('standard_1020')
+                raw_for_plot.set_montage(montage, match_case=False, on_missing='warn')
 
             # Create a fresh figure and axis
             self.montage_plot_widget.figure.clear()
@@ -1566,17 +1616,30 @@ class CleanEEGController(QWidget):
             # Plot montage
             raw_for_plot.plot_sensors(show_names=True,
                                       show=False, axes=ax, kind='topomap')  # Added kind for better display
-            ax.set_title(f"Montage: {montage_name}")
+            
+            # Set appropriate title based on montage type
+            if use_template and montage_applied:
+                montage_name = self.step2_template_montage_combobox.currentText()
+                ax.set_title(f"Template Montage: {montage_name}")
+                display_msg = f"Montage plot displayed using template: {montage_name}."
+            elif use_custom and montage_applied:
+                custom_path = self.step2_chanloc_path_lineedit.text().strip()
+                montage_name = Path(custom_path).name if custom_path else "Custom"
+                ax.set_title(f"Custom Montage: {montage_name}")
+                display_msg = f"Montage plot displayed using custom: {montage_name}."
+            else:
+                ax.set_title("Default Montage: standard_1020 (fallback)")
+                display_msg = "Montage plot displayed using fallback: standard_1020."
 
             # Ensure the figure has proper layout
             self.montage_plot_widget.figure.tight_layout()
             self.montage_plot_widget.canvas.draw()
 
             self.Figure_Layout_Montage.addWidget(self.montage_plot_widget)
-            self._log(f"Montage plot displayed using {montage_name}.")
+            self._log(display_msg)
 
         except Exception as e:
-            warning_msg = f"Could not set or plot montage {montage_name}: {str(e)}"
+            warning_msg = f"Could not set or plot montage: {str(e)}"
             self._log(warning_msg, is_error=True)
             # QMessageBox.warning(self, "Montage Warning", warning_msg) # Can be too intrusive
 
@@ -1681,9 +1744,23 @@ class CleanEEGController(QWidget):
             'input_base_dir': self.step1_input_path_lineedit.text()
         }
 
-        # Add montage settings - simplified to always use template montage
-        settings['montage'] = self.step2_template_montage_combobox.currentText()
-        settings['montage_type'] = 'template'
+        # Add montage settings based on radio button selection
+        if self.step2_use_template_montage_radio.isChecked():
+            settings['montage'] = self.step2_template_montage_combobox.currentText()
+            settings['montage_type'] = 'template'
+        elif self.step2_load_montage_radio.isChecked():
+            custom_path = self.step2_chanloc_path_lineedit.text().strip()
+            if custom_path and os.path.exists(custom_path):
+                settings['montage'] = custom_path
+                settings['montage_type'] = 'custom'
+            else:
+                # Fall back to template if custom path is invalid
+                settings['montage'] = self.step2_template_montage_combobox.currentText()
+                settings['montage_type'] = 'template'
+        else:
+            # Default to template montage
+            settings['montage'] = self.step2_template_montage_combobox.currentText()
+            settings['montage_type'] = 'template'
 
         return settings
 
@@ -1792,6 +1869,42 @@ class CleanEEGController(QWidget):
             self._log(f"Montage selection changed to: {montage_name}. Replotting.")
             # self.current_raw_for_montage.set_montage(None) # Not needed as we use a copy in _create_montage_plot
             self._create_montage_plot()
+    
+    @pyqtSlot(bool)
+    def _on_montage_type_changed(self, checked: bool):
+        """Handle montage type radio button changes."""
+        if checked:  # Only act on the checked radio button
+            self._update_montage_controls_state()
+            if self.current_raw_for_montage:
+                self._create_montage_plot()
+    
+    def _update_montage_controls_state(self):
+        """Enable/disable montage controls based on radio button selection."""
+        use_template = self.step2_use_template_montage_radio.isChecked()
+        use_custom = self.step2_load_montage_radio.isChecked()
+        
+        # Enable/disable template montage controls
+        self.step2_template_montage_combobox.setEnabled(use_template)
+        
+        # Enable/disable custom montage controls
+        self.step2_chanloc_path_lineedit.setEnabled(use_custom)
+        self.step2_browse_montage_button.setEnabled(use_custom)
+    
+    @pyqtSlot()
+    def _browse_custom_montage(self):
+        """Browse for custom montage file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Custom Montage File",
+            "",
+            "Montage Files (*.mat *.ced *.csd *.locs *.sfp *.elc *.txt);;All Files (*)"
+        )
+        if file_path:
+            self.step2_chanloc_path_lineedit.setText(file_path)
+            self._log(f"Selected custom montage: {Path(file_path).name}")
+            # Update the plot if a file is loaded
+            if self.current_raw_for_montage:
+                self._create_montage_plot()
 
     @pyqtSlot()
     def _remove_selected_file(self):
