@@ -505,7 +505,7 @@ class CleanEEGWorker(QThread):
     def _remove_line_noise(raw: mne.io.Raw, line_freq: int) -> mne.io.Raw:
         """Remove line noise using DSS"""
         eeg_data = raw.get_data()
-        processed_data, _ = dss.dss_line(
+        processed_data, _ = dss.dss_line_iter(
             eeg_data.T,
             fline=line_freq,
             sfreq=raw.info['sfreq'],
