@@ -27,10 +27,26 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qt5 import NavigationToolbar2QT
 import warnings
+import logging
+import contextlib
+import io
 from scipy.io import loadmat
 from scipy import signal
 matplotlib.use('Qt5Agg')
 warnings.filterwarnings('ignore')
+
+# Suppress MNE and other library logging
+mne.set_log_level('ERROR')
+logging.getLogger('mne').setLevel(logging.ERROR)
+logging.getLogger('numba').setLevel(logging.ERROR)
+
+
+@contextlib.contextmanager
+def suppress_stdout_stderr():
+    """Context manager to suppress stdout and stderr"""
+    with contextlib.redirect_stdout(io.StringIO()), \
+         contextlib.redirect_stderr(io.StringIO()):
+        yield
 
 
 class MNEPlotWidget(QWidget):
@@ -66,8 +82,19 @@ class CleanEEGWorker(QThread):
         self.output_path = output_path
         self.settings = settings
         self.ica_object = None
+        self.iclabel_results = None  # Store ICLabel classification results
+        self.raw_before_ica = None  # Store raw data before ICA for source visualization
         self.processing_stages = {}  # Store raw data at each stage for quality assessment
         self.snr_log = {}  # Store SNR values at each stage
+        self._stop_requested = False  # Flag to request graceful stop
+
+    def request_stop(self):
+        """Request the worker to stop processing"""
+        self._stop_requested = True
+
+    def _check_stop(self) -> bool:
+        """Check if stop was requested and return True if so"""
+        return self._stop_requested
 
     @staticmethod
     def _read_mat_locations(fname):
@@ -235,13 +262,27 @@ class CleanEEGWorker(QThread):
 
         return snr_results
 
+    def _log_step(self, filename: str, step: str, emoji: str = "🔄"):
+        """Print a clean, formatted log message to terminal"""
+        print(f"{emoji} [{filename}] {step}")
+        self.status_update.emit(step)
+
     def run(self):
         try:
             filename = Path(self.file_path).name
+            print(f"\n{'='*60}")
+            print(f"📂 Processing: {filename}")
+            print(f"{'='*60}")
             self.status_update.emit(f"Processing {filename}...")
+
+            # Check for stop request
+            if self._check_stop():
+                print(f"🛑 [{filename}] Processing stopped by user.")
+                return
 
             # Load the data
             self.progress_update.emit(5)
+            self._log_step(filename, "Loading EEG data...", "📥")
             raw_eeg = self._load_eeg_data(self.file_path)
             raw_original_for_report = raw_eeg.copy()
             bads_before_processing = []
@@ -271,20 +312,25 @@ class CleanEEGWorker(QThread):
 
             # Set montage (only if checkbox is checked and montage is provided)
             if self.settings.get('set_montage') and self.settings.get('montage'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Setting montage...")
+                self._log_step(filename, "Setting montage...", "🗺️")
                 self._set_montage(raw_eeg, self.settings['montage'])
-                # Montage doesn't change the signal, so no new stage needed
 
             # Resample (only if checkbox is checked)
             if self.settings.get('apply_downsample') and self.settings.get('resample_freq'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Downsampling data...")
-                raw_eeg.resample(self.settings['resample_freq'])
+                self._log_step(filename, f"Downsampling to {self.settings['resample_freq']} Hz...", "⬇️")
+                raw_eeg.resample(self.settings['resample_freq'], verbose=False)
                 self.processing_stages['After Downsample'] = raw_eeg.copy()
                 self.snr_log['After Downsample'] = self.compute_snr(raw_eeg)
 
@@ -292,74 +338,101 @@ class CleanEEGWorker(QThread):
 
             # Line noise removal (only if checkbox is checked)
             if self.settings.get('remove_line_noise'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Removing line noise...")
+                self._log_step(filename, f"Removing {self.settings['line_freq']} Hz line noise...", "🔌")
                 raw_clean = self._remove_line_noise(raw_clean, self.settings['line_freq'])
                 self.processing_stages['After Line Noise'] = raw_clean.copy()
                 self.snr_log['After Line Noise'] = self.compute_snr(raw_clean)
 
             # Bandpass filter (only if checkbox is checked)
             if self.settings.get('apply_bandpass') and self.settings.get('highpass_freq'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Applying bandpass filter...")
                 hp_freq = self.settings['highpass_freq']
-                lp_freq = self.settings.get('lowpass_freq', 100)  # Default to 100 Hz if not specified
+                lp_freq = self.settings.get('lowpass_freq', 100)
+                self._log_step(filename, f"Bandpass filtering ({hp_freq}-{lp_freq} Hz)...", "📊")
                 raw_clean.filter(l_freq=hp_freq, h_freq=lp_freq, method='fir', verbose=False)
                 self.processing_stages['After Bandpass'] = raw_clean.copy()
                 self.snr_log['After Bandpass'] = self.compute_snr(raw_clean)
 
             # Bad channel detection (only if checkbox is checked)
             if self.settings.get('detect_bad_channels'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Detecting bad channels...")
+                self._log_step(filename, "Detecting bad channels...", "🔍")
                 bad_channels = self._detect_bad_channels(raw_clean)
                 raw_clean.info['bads'] = bad_channels
                 bads_before_processing = list(bad_channels)
+                if bad_channels:
+                    print(f"   ⚠️  Found {len(bad_channels)} bad channel(s): {', '.join(bad_channels)}")
                 self.processing_stages['After Bad Channels'] = raw_clean.copy()
                 self.snr_log['After Bad Channels'] = self.compute_snr(raw_clean)
+
+            # Check stop before reference
+            if self._check_stop():
+                print(f"🛑 [{filename}] Processing stopped by user.")
+                return
 
             # Pick channels
             raw_clean.pick(picks='eeg')
 
-            # Set reference
-            raw_clean.set_eeg_reference('average')
-            raw_clean.apply_proj()
+            # Set average reference and apply it directly
+            raw_clean.set_eeg_reference('average', projection=False, verbose=False)
 
             # ICA (only if checkbox is checked)
             if self.settings.get('apply_ica'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Running ICA...")
-                raw_clean, self.ica_object = self._apply_ica(raw_clean, self.settings)
+                self._log_step(filename, "Running ICA + ICLabel...", "🧠")
+                self.raw_before_ica = raw_clean.copy()
+                raw_clean, self.ica_object, self.iclabel_results = self._apply_ica(raw_clean, self.settings)
+                n_excluded = len(self.iclabel_results.get('excluded_idx', []))
+                print(f"   ✂️  Removed {n_excluded} artifact component(s)")
                 self.processing_stages['After ICA'] = raw_clean.copy()
                 self.snr_log['After ICA'] = self.compute_snr(raw_clean)
 
             # ASR (only if checkbox is checked)
             if self.settings.get('apply_asr'):
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Applying ASR...")
                 asr_cutoff = self.settings.get('asr_cutoff', 5)
                 asr_calibration = self.settings.get('asr_calibration', 60)
+                self._log_step(filename, f"Applying ASR (cutoff={asr_cutoff})...", "🧹")
                 raw_clean = self._apply_asr(raw_clean, asr_cutoff, asr_calibration)
                 self.processing_stages['After ASR'] = raw_clean.copy()
                 self.snr_log['After ASR'] = self.compute_snr(raw_clean)
 
             # Interpolate bad channels (only if checkbox is checked and bad channels exist)
             if self.settings.get('interpolate_bads') and len(raw_clean.info['bads']) > 0:
+                if self._check_stop():
+                    print(f"🛑 [{filename}] Processing stopped by user.")
+                    return
                 current_step += 1
                 progress = int((current_step / total_steps) * 95)
                 self.progress_update.emit(progress)
-                self.status_update.emit("Interpolating bad channels...")
-                raw_clean.interpolate_bads(reset_bads=True)
+                self._log_step(filename, "Interpolating bad channels...", "🔧")
+                raw_clean.interpolate_bads(reset_bads=True, verbose=False)
                 self.processing_stages['After Interpolation'] = raw_clean.copy()
                 self.snr_log['After Interpolation'] = self.compute_snr(raw_clean)
 
@@ -369,29 +442,32 @@ class CleanEEGWorker(QThread):
 
             # Save the processed data
             self.progress_update.emit(95)
-            self.status_update.emit("Saving processed data...")
+            self._log_step(filename, "Saving processed data...", "💾")
             output_file = self._save_processed_data(raw_clean, filename)
 
             # Generate and save report if requested
             if self.settings.get('export_report'):
-                self.status_update.emit("Generating HTML report...")
-                self._generate_report(
-                    raw_original_for_report, raw_clean, bads_before_processing, filename,
-                    self.settings.get('input_base_dir'))
-                self.status_update.emit("HTML report generated.")
+                self._log_step(filename, "Generating HTML report...", "📄")
+                with suppress_stdout_stderr():
+                    self._generate_report(
+                        raw_original_for_report, raw_clean, bads_before_processing, filename,
+                        self.settings.get('input_base_dir'))
 
             self.progress_update.emit(100)
+            print(f"✅ [{filename}] Processing complete!")
+            print(f"{'='*60}\n")
             self.processing_complete.emit(filename, raw_clean)
 
         except Exception as e:
+            print(f"❌ [{filename}] Error: {str(e)}")
             self.processing_error.emit(filename, str(e))
 
     @staticmethod
     def _load_eeg_data(file_path: str) -> mne.io.Raw:
         """Load EEG data with automatic format detection and correct common mislabels."""
         try:
-            raw = mne.io.read_raw(file_path, preload=True, verbose="WARNING")
-            # Patterns for channels that aren’t true EEG
+            raw = mne.io.read_raw(file_path, preload=True, verbose=False)
+            # Patterns for channels that aren't true EEG
             eog_patterns = ["EOG", "VEOG", "HEOG", "EOGH", "EOGV", "EOG1", "EOG2", "LHEOG", "RHEOG"]
             ref_patterns = ["REF", "GND", "A1", "A2", "M1", "M2", "TP9", "TP10"]
             other_patterns = ["ECG", "EMG", "RESP", "TRIG", "STI"]
@@ -406,7 +482,6 @@ class CleanEEGWorker(QThread):
                     mislabeled.append((ch, "misc"))
             if mislabeled:
                 for name, ctype in mislabeled:
-                    print(f"Channel types corrected: {name} → {ctype}")
                     raw.set_channel_types({name: ctype})
             return raw
 
@@ -505,21 +580,23 @@ class CleanEEGWorker(QThread):
     def _remove_line_noise(raw: mne.io.Raw, line_freq: int) -> mne.io.Raw:
         """Remove line noise using DSS"""
         eeg_data = raw.get_data()
-        processed_data, _ = dss.dss_line_iter(
-            eeg_data.T,
-            fline=line_freq,
-            sfreq=raw.info['sfreq'],
-            show=False
-        )
+        with suppress_stdout_stderr():
+            processed_data, _ = dss.dss_line_iter(
+                eeg_data.T,
+                fline=line_freq,
+                sfreq=raw.info['sfreq'],
+                show=False
+            )
         raw._data = processed_data.T
         return raw
 
     @staticmethod
     def _detect_bad_channels(raw: mne.io.Raw) -> List[str]:
         """Detect bad channels using PyPrep"""
-        picks_eeg_only = mne.pick_types(raw.info, eeg=True, eog=False)
-        nd = NoisyChannels(raw.copy().pick(picks=picks_eeg_only), random_state=1337)
-        nd.find_all_bads()
+        with suppress_stdout_stderr():
+            raw_copy = raw.copy().pick(picks='eeg', verbose=False)
+            nd = NoisyChannels(raw_copy, random_state=1337, do_detrend=False)
+            nd.find_all_bads()
 
         if nd:
             bad_channels = [str(ch) for ch in nd.get_bads()]
@@ -527,18 +604,20 @@ class CleanEEGWorker(QThread):
         return []
 
     @staticmethod
-    def _apply_ica(raw: mne.io.Raw, settings: Dict[str, Any]) -> Tuple[mne.io.Raw, ICA]:
-        """Apply ICA and remove artifacts"""
+    def _apply_ica(raw: mne.io.Raw, settings: Dict[str, Any]) -> Tuple[mne.io.Raw, ICA, Dict[str, Any]]:
+        """Apply ICA and remove artifacts. Returns processed raw, ICA object, and ICLabel results."""
         ica_method = settings.get('ica_method', 'fastica')
         if ica_method == 'infomax':
-            ica = ICA(n_components=None, random_state=97, method=ica_method, fit_params=dict(extended=True))
+            ica = ICA(n_components=None, random_state=97, method=ica_method, 
+                     fit_params=dict(extended=True), verbose=False)
         else:
-            ica = ICA(n_components=None, random_state=97, method=ica_method)
-        ica.fit(raw)
+            ica = ICA(n_components=None, random_state=97, method=ica_method, verbose=False)
+        ica.fit(raw, verbose=False)
 
         # Use ICLabel to classify components
         ic_labels = label_components(raw, ica, method='iclabel')
         labels = ic_labels["labels"]
+        label_probs = ic_labels["y_pred_proba"]  # Probability for each label
 
         # Determine which components to exclude based on checked options
         exclude_types = []
@@ -548,8 +627,12 @@ class CleanEEGWorker(QThread):
             exclude_types.append('eye blink')
         if settings.get('remove_heart_beat'):
             exclude_types.append('heart beat')
+        if settings.get('remove_channel_noise'):
+            exclude_types.append('channel noise')
+        if settings.get('remove_line_noise_ica'):
+            exclude_types.append('line noise')
         if settings.get('remove_others'):
-            exclude_types.extend(['line noise', 'channel noise'])
+            exclude_types.append('other')
 
         exclude_idx = [
             idx for idx, label in enumerate(labels)
@@ -557,7 +640,16 @@ class CleanEEGWorker(QThread):
         ]
 
         ica.exclude = exclude_idx
-        return ica.apply(raw), ica
+        
+        # Store ICLabel results for report
+        iclabel_results = {
+            'labels': labels,
+            'probabilities': label_probs,
+            'excluded_idx': exclude_idx,
+            'exclude_types': exclude_types
+        }
+        
+        return ica.apply(raw, verbose=False), ica, iclabel_results
 
     @staticmethod
     def _apply_asr(raw: mne.io.Raw, cutoff: float, asr_calibration: float) -> mne.io.Raw:
@@ -677,14 +769,6 @@ class CleanEEGWorker(QThread):
             except Exception as e:
                 self.status_update.emit(f"Could not create summary: {e}")
 
-            # Add SNR improvement table
-            try:
-                snr_table_html = self._create_snr_summary_table()
-                report.add_html(
-                    snr_table_html, title="SNR Improvement Summary", section=main_section_title,
-                    tags=("SNR", "Summary"))
-            except Exception as e:
-                self.status_update.emit(f"Could not create SNR table: {e}")
 
             # Process each stage and add to report
             for stage_name, stage_raw in self.processing_stages.items():
@@ -692,6 +776,13 @@ class CleanEEGWorker(QThread):
                     self._add_stage_to_report(report, stage_name, stage_raw, main_section_title)
                 except Exception as e:
                     self.status_update.emit(f"Could not add stage {stage_name} to report: {e}")
+
+            # Add ICA component analysis if ICA was applied
+            if self.settings.get('apply_ica') and self.ica_object is not None:
+                try:
+                    self._add_ica_to_report(report, main_section_title)
+                except Exception as e:
+                    self.status_update.emit(f"Could not add ICA analysis to report: {e}")
 
             # Add overall comparison plots
             try:
@@ -754,14 +845,6 @@ class CleanEEGWorker(QThread):
 
         # Add key metrics safely
         try:
-            if hasattr(self, 'snr_log') and self.snr_log and 'Original' in self.snr_log and 'Final' in self.snr_log:
-                orig_alpha = self.snr_log['Original']['alpha']['mean_snr']
-                final_alpha = self.snr_log['Final']['alpha']['mean_snr']
-                improvement = final_alpha - orig_alpha
-                html += f"<li>Alpha band SNR improvement: {improvement:+.2f} dB</li>"
-            else:
-                html += "<li>SNR data unavailable</li>"
-
             # Count channels safely
             if hasattr(self, 'processing_stages') and 'Original' in self.processing_stages:
                 n_channels = len(self.processing_stages['Original'].ch_names)
@@ -854,19 +937,12 @@ class CleanEEGWorker(QThread):
         except Exception as e:
             self.status_update.emit(f"Could not add header for {stage_name}: {e}")
 
-        # Add SNR metrics for this stage
-        try:
-            if hasattr(self, 'snr_log') and stage_name in self.snr_log:
-                snr_html = self._create_stage_snr_html(stage_name)
-                report.add_html(
-                    snr_html, title=f"{stage_name} SNR Metrics", section=section_title, tags=(stage_name, "SNR"))
-        except Exception as e:
-            self.status_update.emit(f"Could not add SNR metrics for {stage_name}: {e}")
-
         # Add PSD plot
         try:
-            psd_computed = stage_raw.compute_psd(fmax=80, verbose=False)
-            fig_psd = psd_computed.plot(show=False, average=True, spatial_colors=False)
+            # Use highpass frequency from settings as fmin, default to 1 Hz if not set
+            fmin = self.settings.get('highpass_freq', 1) or 1
+            psd_computed = stage_raw.compute_psd(fmin=fmin, fmax=80, verbose=False)
+            fig_psd = psd_computed.plot(show=False, average=True, spatial_colors=False, verbose=False)
             fig_psd.suptitle(f"PSD: {stage_name}")
             report.add_figure(fig_psd, title=f"PSD: {stage_name}", section=section_title, tags=(stage_name, "PSD"))
             plt.close(fig_psd)
@@ -964,18 +1040,7 @@ class CleanEEGWorker(QThread):
         """Add comprehensive comparison plots to the report"""
         self.status_update.emit("Creating comparison plots...")
 
-        # 1. SNR progression plot
-        try:
-            fig_snr = self._create_snr_progression_plot()
-            if fig_snr:
-                report.add_figure(
-                    fig_snr, title="SNR Progression Across Processing Steps", section=section_title,
-                    tags=("Comparison", "SNR"))
-                plt.close(fig_snr)
-        except Exception as e:
-            self.status_update.emit(f"Could not create SNR progression plot: {e}")
-
-        # 2. Before/After PSD comparison
+        # Before/After PSD comparison
         try:
             fig_psd_comp = self._create_psd_comparison_plot()
             if fig_psd_comp:
@@ -985,6 +1050,305 @@ class CleanEEGWorker(QThread):
                 plt.close(fig_psd_comp)
         except Exception as e:
             self.status_update.emit(f"Could not create PSD comparison: {e}")
+
+    def _add_ica_to_report(self, report: mne.Report, section_title: str):
+        """Add ICA component visualization to the report with ICLabel classifications"""
+        if self.ica_object is None or self.raw_before_ica is None:
+            self.status_update.emit("No ICA data available for report.")
+            return
+
+        self.status_update.emit("Adding ICA components to report...")
+        ica_section = "ICA Component Analysis"
+        
+        try:
+            n_components = self.ica_object.n_components_
+            
+            # Safely extract ICLabel results, converting to appropriate types
+            if self.iclabel_results:
+                labels_raw = self.iclabel_results.get('labels', None)
+                # Convert labels to list if it's a numpy array
+                if labels_raw is not None:
+                    labels = list(labels_raw) if hasattr(labels_raw, '__iter__') else ['unknown'] * n_components
+                else:
+                    labels = ['unknown'] * n_components
+                    
+                probabilities = self.iclabel_results.get('probabilities', None)
+                # Ensure probabilities is a numpy array or None
+                if probabilities is not None:
+                    probabilities = np.array(probabilities)
+                    
+                excluded_raw = self.iclabel_results.get('excluded_idx', [])
+                excluded_idx = list(excluded_raw) if hasattr(excluded_raw, '__iter__') else []
+            else:
+                labels = ['unknown'] * n_components
+                probabilities = None
+                excluded_idx = []
+            
+            # Get highpass frequency for PSD plots
+            fmin = self.settings.get('highpass_freq', 1) or 1
+            
+            # Add ICA summary HTML
+            summary_html = self._create_ica_summary_html(n_components, labels, excluded_idx, probabilities)
+            report.add_html(summary_html, title="ICA Summary", section=ica_section, tags=("ICA", "Summary"))
+            
+            # Create component topography overview (all components in a grid)
+            try:
+                fig_topo = self.ica_object.plot_components(show=False, title='ICA Component Topographies')
+                if isinstance(fig_topo, list):
+                    for i, fig in enumerate(fig_topo):
+                        report.add_figure(fig, title=f"ICA Topographies (Page {i+1})", 
+                                         section=ica_section, tags=("ICA", "Topography"))
+                        plt.close(fig)
+                else:
+                    report.add_figure(fig_topo, title="ICA Topographies", 
+                                     section=ica_section, tags=("ICA", "Topography"))
+                    plt.close(fig_topo)
+            except Exception:
+                pass  # Silently skip if topography overview fails
+            
+            # Add detailed view for each component
+            for ic_idx in range(n_components):
+                try:
+                    self._add_single_ic_to_report(report, ic_idx, labels, probabilities, 
+                                                  excluded_idx, ica_section, fmin)
+                except Exception:
+                    pass  # Silently skip failed components
+                    
+        except Exception:
+            pass  # Silently handle ICA report errors
+
+    def _create_ica_summary_html(self, n_components: int, labels: List[str], 
+                                  excluded_idx: List[int], probabilities: Optional[np.ndarray]) -> str:
+        """Create HTML summary of ICA components with ICLabel classifications"""
+        
+        # ICLabel class names in order
+        iclabel_classes = ['brain', 'muscle artifact', 'eye blink', 'heart beat', 
+                          'line noise', 'channel noise', 'other']
+        
+        html = """
+        <style>
+            .ica-table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+            .ica-table th, .ica-table td { border: 1px solid #ddd; padding: 8px; text-align: center; }
+            .ica-table th { background-color: #f2f2f2; font-weight: bold; }
+            .ica-table tr:nth-child(even) { background-color: #f9f9f9; }
+            .excluded { background-color: #ffcccc !important; }
+            .brain { background-color: #ccffcc !important; }
+            .artifact-label { font-weight: bold; color: #cc0000; }
+            .brain-label { font-weight: bold; color: #006600; }
+        </style>
+        <h3>ICA Component Classification Summary</h3>
+        """
+        
+        html += f"<p><strong>Total Components:</strong> {n_components}</p>"
+        html += f"<p><strong>Excluded Components:</strong> {len(excluded_idx)} "
+        if excluded_idx:
+            html += f"(IC{', IC'.join(map(lambda x: f'{x:03d}', excluded_idx))})"
+        html += "</p>"
+        
+        # Count by label type
+        label_counts = {}
+        for label in labels:
+            label_counts[label] = label_counts.get(label, 0) + 1
+        
+        html += "<p><strong>Classification Distribution:</strong></p><ul>"
+        for label, count in sorted(label_counts.items(), key=lambda x: -x[1]):
+            html += f"<li>{label}: {count} component(s)</li>"
+        html += "</ul>"
+        
+        # Detailed table
+        html += """
+        <h4>Component Details</h4>
+        <table class="ica-table">
+        <tr>
+            <th>Component</th>
+            <th>ICLabel Classification</th>
+            <th>Confidence</th>
+            <th>Status</th>
+        </tr>
+        """
+        
+        for ic_idx in range(n_components):
+            try:
+                label = labels[ic_idx] if ic_idx < len(labels) else 'unknown'
+            except (TypeError, IndexError):
+                label = 'unknown'
+            is_excluded = ic_idx in excluded_idx
+            is_brain = label == 'brain'
+            
+            row_class = 'excluded' if is_excluded else ('brain' if is_brain else '')
+            label_class = 'brain-label' if is_brain else 'artifact-label' if is_excluded else ''
+            
+            # Get confidence if available
+            try:
+                if probabilities is not None and ic_idx < probabilities.shape[0]:
+                    prob_array = probabilities[ic_idx]
+                    max_prob = float(np.max(prob_array)) * 100
+                    confidence = f"{max_prob:.1f}%"
+                else:
+                    confidence = "N/A"
+            except (TypeError, IndexError, AttributeError):
+                confidence = "N/A"
+            
+            status = "EXCLUDED" if is_excluded else "Kept"
+            status_style = 'color: red; font-weight: bold;' if is_excluded else 'color: green;'
+            
+            html += f"""
+            <tr class="{row_class}">
+                <td>IC{ic_idx:03d}</td>
+                <td class="{label_class}">{label}</td>
+                <td>{confidence}</td>
+                <td style="{status_style}">{status}</td>
+            </tr>
+            """
+        
+        html += "</table>"
+        return html
+
+    def _add_single_ic_to_report(self, report: mne.Report, ic_idx: int, labels: List[str],
+                                  probabilities: Optional[np.ndarray], excluded_idx: List[int],
+                                  section_title: str, fmin: float):
+        """Add a single ICA component's detailed view to the report"""
+        try:
+            label = labels[ic_idx] if ic_idx < len(labels) else 'unknown'
+        except (TypeError, IndexError):
+            label = 'unknown'
+        is_excluded = ic_idx in excluded_idx
+        
+        # Create status indicator
+        status_str = " [EXCLUDED]" if is_excluded else ""
+        ic_title = f"IC{ic_idx:03d}: {label}{status_str}"
+        
+        # Create a comprehensive figure for this component
+        fig = plt.figure(figsize=(16, 10))
+        
+        # Create grid layout: topography (top-left), properties info (top-right), 
+        # PSD (bottom-left), time series (bottom-right)
+        gs = fig.add_gridspec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1.5])
+        
+        # 1. Topography - use MNE's plot_topomap for the component
+        ax_topo = fig.add_subplot(gs[0, 0])
+        try:
+            # Get the ICA component data and plot topomap directly
+            ica_data = self.ica_object.get_components()[:, ic_idx]
+            mne.viz.plot_topomap(ica_data, self.ica_object.info, axes=ax_topo, show=False)
+            ax_topo.set_title(f'Topography: IC{ic_idx:03d}', fontsize=12)
+        except Exception:
+            ax_topo.text(0.5, 0.5, 'Topography\nUnavailable', ha='center', va='center', 
+                        transform=ax_topo.transAxes, fontsize=14)
+            ax_topo.set_title(f'Topography: IC{ic_idx:03d}', fontsize=12)
+            ax_topo.axis('off')
+        
+        # 2. ICLabel probabilities bar chart
+        ax_probs = fig.add_subplot(gs[0, 1])
+        iclabel_classes = ['brain', 'muscle', 'eye', 'heart', 'line', 'channel', 'other']
+        try:
+            probs = None
+            if probabilities is not None:
+                # Handle different probability array shapes
+                if len(probabilities.shape) == 2:
+                    # 2D array: (n_components, n_classes)
+                    if ic_idx < probabilities.shape[0]:
+                        probs = np.array(probabilities[ic_idx]) * 100
+                elif len(probabilities.shape) == 1:
+                    # 1D array: might be object array containing arrays, or just confidence values
+                    if ic_idx < len(probabilities):
+                        prob_item = probabilities[ic_idx]
+                        if hasattr(prob_item, '__len__') and not isinstance(prob_item, str):
+                            probs = np.array(prob_item) * 100
+                        else:
+                            # Single confidence value - can't show bar chart
+                            probs = None
+            
+            if probs is not None and len(probs) > 0:
+                n_probs = len(probs)
+                colors = ['green' if i == np.argmax(probs) else 'steelblue' for i in range(n_probs)]
+                if is_excluded:
+                    colors = ['red' if i == np.argmax(probs) else 'steelblue' for i in range(n_probs)]
+                # Ensure we have matching lengths for bar chart
+                display_classes = iclabel_classes[:n_probs] if n_probs <= len(iclabel_classes) else iclabel_classes
+                display_probs = probs[:len(display_classes)]
+                bars = ax_probs.bar(display_classes, display_probs, color=colors[:len(display_classes)])
+                ax_probs.set_ylabel('Probability (%)')
+                ax_probs.set_title(f'ICLabel Classification: {label}', fontsize=12)
+                ax_probs.set_ylim(0, 100)
+                ax_probs.tick_params(axis='x', rotation=45)
+                # Add value labels on bars
+                for bar, prob in zip(bars, display_probs):
+                    if prob > 5:
+                        ax_probs.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, 
+                                     f'{prob:.1f}%', ha='center', va='bottom', fontsize=9)
+            else:
+                # Show just the label classification without probabilities
+                ax_probs.text(0.5, 0.5, f'Classification:\n{label}', ha='center', va='center', 
+                             transform=ax_probs.transAxes, fontsize=16, fontweight='bold',
+                             color='red' if is_excluded else 'green')
+                ax_probs.set_title('ICLabel Classification', fontsize=12)
+                ax_probs.axis('off')
+        except Exception:
+            ax_probs.text(0.5, 0.5, f'Classification:\n{label}', ha='center', va='center', 
+                         transform=ax_probs.transAxes, fontsize=14)
+            ax_probs.set_title('ICLabel Classification', fontsize=12)
+            ax_probs.axis('off')
+        
+        # 3. Component PSD
+        ax_psd = fig.add_subplot(gs[1, 0])
+        try:
+            # Get ICA sources
+            sources = self.ica_object.get_sources(self.raw_before_ica)
+            source_data = sources.get_data()[ic_idx]
+            sfreq = sources.info['sfreq']
+            
+            # Compute PSD using scipy.signal (already imported at module level)
+            freqs, psd = signal.welch(source_data, sfreq, nperseg=int(2*sfreq))
+            
+            # Filter to frequency range
+            freq_mask = (freqs >= fmin) & (freqs <= 80)
+            ax_psd.semilogy(freqs[freq_mask], psd[freq_mask], 'b-', linewidth=1.5)
+            ax_psd.set_xlabel('Frequency (Hz)')
+            ax_psd.set_ylabel('Power (log scale)')
+            ax_psd.set_title(f'Power Spectral Density', fontsize=12)
+            ax_psd.set_xlim(fmin, 80)
+            ax_psd.grid(True, alpha=0.3)
+        except Exception:
+            ax_psd.text(0.5, 0.5, f'PSD Unavailable', ha='center', va='center', 
+                       transform=ax_psd.transAxes, fontsize=12)
+            ax_psd.set_title('Power Spectral Density', fontsize=12)
+        
+        # 4. Component time series sample
+        ax_ts = fig.add_subplot(gs[1, 1])
+        try:
+            sources = self.ica_object.get_sources(self.raw_before_ica)
+            source_data = sources.get_data()[ic_idx]
+            sfreq = sources.info['sfreq']
+            
+            # Plot first 10 seconds
+            n_samples = min(int(10 * sfreq), len(source_data))
+            times = np.arange(n_samples) / sfreq
+            ax_ts.plot(times, source_data[:n_samples], 'b-', linewidth=0.5)
+            ax_ts.set_xlabel('Time (s)')
+            ax_ts.set_ylabel('Amplitude (a.u.)')
+            ax_ts.set_title(f'Time Series Sample (10s)', fontsize=12)
+            ax_ts.set_xlim(0, times[-1])
+            ax_ts.grid(True, alpha=0.3)
+        except Exception:
+            ax_ts.text(0.5, 0.5, f'Time series\nUnavailable', ha='center', va='center', 
+                      transform=ax_ts.transAxes, fontsize=12)
+            ax_ts.set_title('Time Series Sample', fontsize=12)
+        
+        # Add overall title with status
+        title_color = 'red' if is_excluded else 'green'
+        fig.suptitle(ic_title, fontsize=14, fontweight='bold', color=title_color)
+        
+        plt.tight_layout()
+        
+        # Add to report - sanitize label for tags (remove spaces and special chars)
+        safe_label = label.replace(' ', '_').replace('-', '_')
+        tags = ("ICA", "Component", safe_label)
+        if is_excluded:
+            tags = ("ICA", "Component", "Excluded", safe_label)
+        
+        report.add_figure(fig, title=ic_title, section=section_title, tags=tags)
+        plt.close(fig)
 
     def _create_snr_progression_plot(self) -> Optional[Figure]:
         """Create SNR progression plot"""
@@ -1065,26 +1429,32 @@ class CleanEEGWorker(QThread):
         try:
             fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
 
+            # Use highpass frequency from settings as fmin, default to 1 Hz if not set
+            fmin = self.settings.get('highpass_freq', 1) or 1
+            fmax = 80
+
             # Get PSDs
             orig_raw = self.processing_stages[first_stage]
             final_raw = self.processing_stages[last_stage]
 
             # Plot Original PSD
-            psd_orig = orig_raw.compute_psd(fmax=80, verbose=False)
+            psd_orig = orig_raw.compute_psd(fmin=fmin, fmax=fmax, verbose=False)
             psd_orig_data = 10 * np.log10(psd_orig.get_data().mean(axis=0) + 1e-12)
             ax1.plot(psd_orig.freqs, psd_orig_data, 'b-', linewidth=2)
             ax1.set_title(f'{first_stage} Data')
             ax1.set_xlabel('Frequency (Hz)')
             ax1.set_ylabel('Power (dB)')
+            ax1.set_xlim(fmin, fmax)
             ax1.grid(True, alpha=0.3)
 
             # Plot Final PSD
-            psd_final = final_raw.compute_psd(fmax=80, verbose=False)
+            psd_final = final_raw.compute_psd(fmin=fmin, fmax=fmax, verbose=False)
             psd_final_data = 10 * np.log10(psd_final.get_data().mean(axis=0) + 1e-12)
             ax2.plot(psd_final.freqs, psd_final_data, 'r-', linewidth=2)
             ax2.set_title(f'{last_stage} Processed Data')
             ax2.set_xlabel('Frequency (Hz)')
             ax2.set_ylabel('Power (dB)')
+            ax2.set_xlim(fmin, fmax)
             ax2.grid(True, alpha=0.3)
 
             # Plot comparison
@@ -1093,16 +1463,19 @@ class CleanEEGWorker(QThread):
             ax3.set_title('PSD Comparison')
             ax3.set_xlabel('Frequency (Hz)')
             ax3.set_ylabel('Power (dB)')
+            ax3.set_xlim(fmin, fmax)
             ax3.legend()
             ax3.grid(True, alpha=0.3)
 
-            # Highlight frequency bands
+            # Highlight frequency bands (only show bands within the frequency range)
             for ax in [ax1, ax2, ax3]:
-                ax.axvspan(1, 4, alpha=0.1, color='purple')
-                ax.axvspan(4, 8, alpha=0.1, color='blue')
-                ax.axvspan(8, 13, alpha=0.1, color='green')
-                ax.axvspan(13, 30, alpha=0.1, color='orange')
-                ax.axvspan(30, 80, alpha=0.1, color='red')
+                if fmin <= 4:
+                    ax.axvspan(max(fmin, 1), 4, alpha=0.1, color='purple')
+                if fmin <= 8:
+                    ax.axvspan(max(fmin, 4), 8, alpha=0.1, color='blue')
+                ax.axvspan(max(fmin, 8), 13, alpha=0.1, color='green')
+                ax.axvspan(max(fmin, 13), 30, alpha=0.1, color='orange')
+                ax.axvspan(max(fmin, 30), fmax, alpha=0.1, color='red')
 
             fig.suptitle('Power Spectral Density: Before and After Processing', fontsize=16)
             plt.tight_layout()
@@ -1124,6 +1497,7 @@ class CleanEEGController(QWidget):
         self.current_raw_for_montage = None
         self.processing_thread = None
         self.montage_options = self._get_available_montages()
+        self._processing_stopped = False  # Flag to track if user stopped processing
         self.current_file_index = -1
         self.current_file_path = None
 
@@ -1287,6 +1661,7 @@ class CleanEEGController(QWidget):
         self.step1_import_raw_button.clicked.connect(self._import_data)
         self.step2_save_path_button.clicked.connect(self._select_output_directory)
         self.step2_preprocess_data_button.clicked.connect(self._start_preprocessing)
+        self.step2_stop_process_data_button.clicked.connect(self._stop_preprocessing)
 
         # Connect preprocessing option checkboxes to enable/disable their inputs
         self.step2_bp_filter_checkbox.toggled.connect(self._update_preprocessing_options_state)
@@ -1331,6 +1706,8 @@ class CleanEEGController(QWidget):
         self.muscle_checkbox.setEnabled(ica_enabled)
         self.eye_blink_checkbox.setEnabled(ica_enabled)
         self.heart_beat_checkbox.setEnabled(ica_enabled)
+        self.channel_noise_checkbox.setEnabled(ica_enabled)
+        self.line_noise_checkbox.setEnabled(ica_enabled)
         self.others_checkbox.setEnabled(ica_enabled)
 
         # ASR options
@@ -1706,11 +2083,26 @@ class CleanEEGController(QWidget):
         self.preprocess_progressbar.setValue(0)
         self._log(f"Starting preprocessing of {len(self.loaded_files)} files...")
 
-        # Disable UI during processing
+        # Reset stop flag and disable/enable buttons appropriately
+        self._processing_stopped = False
         self.step2_preprocess_data_button.setEnabled(False)
+        self.step2_stop_process_data_button.setEnabled(True)
 
         # Process first file (extend to process all files in sequence)
         self._process_next_file(0, output_dir, settings)
+
+    def _stop_preprocessing(self):
+        """Stop the preprocessing without crashing the app"""
+        self._processing_stopped = True
+        
+        # Request the current worker to stop
+        if self.processing_thread is not None and self.processing_thread.isRunning():
+            self.processing_thread.request_stop()
+            self._log("⏹️ Stop requested. Waiting for current step to finish...")
+            print("🛑 Stop requested by user. Processing will stop after current step.")
+        
+        # Disable the stop button to prevent multiple clicks
+        self.step2_stop_process_data_button.setEnabled(False)
 
     def _get_preprocessing_settings(self) -> Dict[str, Any]:
         """Gather all preprocessing settings from UI"""
@@ -1732,6 +2124,8 @@ class CleanEEGController(QWidget):
             'remove_muscle': self.muscle_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
             'remove_eye_blink': self.eye_blink_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
             'remove_heart_beat': self.heart_beat_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
+            'remove_channel_noise': self.channel_noise_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
+            'remove_line_noise_ica': self.line_noise_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
             'remove_others': self.others_checkbox.isChecked() if self.step2_ica_checkbox.isChecked() else False,
             'apply_asr': self.step2_asr_checkbox.isChecked(),
             'asr_cutoff': float(self.asr_cutoff_lineedit.text()) if self.step2_asr_checkbox.isChecked() else 5,
@@ -1777,11 +2171,24 @@ class CleanEEGController(QWidget):
 
     def _process_next_file(self, file_idx: int, output_dir: str, settings: Dict[str, Any]):
         """Process the next file in the queue"""
+        # Check if processing was stopped by user
+        if self._processing_stopped:
+            self._cleanup_current_thread()
+            self.step2_preprocess_data_button.setEnabled(True)
+            self.step2_stop_process_data_button.setEnabled(False)
+            processed_count = file_idx
+            message = f"Processing stopped by user. {processed_count}/{len(self.loaded_files)} files processed."
+            self._log(f"🛑 {message}")
+            print(f"🛑 {message}")
+            QMessageBox.information(self, "Stopped", message)
+            return
+
         if file_idx >= len(self.loaded_files):
             # All files processed
             self._cleanup_current_thread()
             self.preprocess_progressbar.setValue(100)
             self.step2_preprocess_data_button.setEnabled(True)
+            self.step2_stop_process_data_button.setEnabled(False)
             message = "All files processed successfully!"
             self._log(message)
             QMessageBox.information(self, "Success", message)
@@ -1808,6 +2215,9 @@ class CleanEEGController(QWidget):
         self.processing_thread.processing_error.connect(
             lambda fname, err: self._on_processing_error(fname, err)
         )
+        self.processing_thread.finished.connect(
+            lambda: self._on_thread_finished(file_idx, output_dir, settings)
+        )
 
         # Start processing
         self.processing_thread.start()
@@ -1820,6 +2230,7 @@ class CleanEEGController(QWidget):
                 self.processing_thread.status_update.disconnect()
                 self.processing_thread.processing_complete.disconnect()
                 self.processing_thread.processing_error.disconnect()
+                self.processing_thread.finished.disconnect()
             except TypeError:
                 # Signals may already be disconnected, ignore the error
                 pass
@@ -1860,7 +2271,14 @@ class CleanEEGController(QWidget):
         self._cleanup_current_thread()
         
         self.step2_preprocess_data_button.setEnabled(True)
+        self.step2_stop_process_data_button.setEnabled(False)
         self.preprocess_progressbar.setValue(0)
+
+    def _on_thread_finished(self, file_idx: int, output_dir: str, settings: Dict[str, Any]):
+        """Handle thread finished signal - for when processing is stopped"""
+        # Only handle here if processing was stopped (normal completion is handled by _on_file_processed)
+        if self._processing_stopped:
+            self._process_next_file(file_idx, output_dir, settings)
 
     @pyqtSlot(str)
     def _on_montage_selection_changed_for_plot(self, montage_name: str):

@@ -54,7 +54,7 @@
           <property name="geometry">
            <rect>
             <x>0</x>
-            <y>0</y>
+            <y>-180</y>
             <width>1093</width>
             <height>923</height>
            </rect>
@@ -79,8 +79,7 @@
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>Input Folder</string>
@@ -153,14 +152,14 @@ color: rgb(255, 255, 255);</string>
                </property>
                <property name="font">
                 <font>
+                 <family>Calibri</family>
                  <pointsize>16</pointsize>
                  <weight>75</weight>
                  <bold>true</bold>
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>Data Extension</string>
@@ -274,14 +273,14 @@ color: rgb(255, 255, 255);</string>
                </property>
                <property name="font">
                 <font>
+                 <family>Calibri</family>
                  <pointsize>16</pointsize>
                  <weight>75</weight>
                  <bold>true</bold>
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>Find Data</string>
@@ -440,14 +439,14 @@ color: rgb(255, 255, 255);</string>
                </property>
                <property name="font">
                 <font>
+                 <family>Calibri</family>
                  <pointsize>16</pointsize>
                  <weight>75</weight>
                  <bold>true</bold>
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>EEG Montage</string>
@@ -628,14 +627,14 @@ color: rgb(255, 255, 255);</string>
                  </property>
                  <property name="font">
                   <font>
+                   <family>Calibri</family>
                    <pointsize>16</pointsize>
                    <weight>75</weight>
                    <bold>true</bold>
                   </font>
                  </property>
                  <property name="styleSheet">
-                  <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                  <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                  </property>
                  <property name="text">
                   <string>Preprocessing Steps</string>
@@ -810,6 +809,26 @@ color: rgb(255, 255, 255);</string>
                   <widget class="QCheckBox" name="heart_beat_checkbox">
                    <property name="text">
                     <string>Heart Beat</string>
+                   </property>
+                   <property name="checked">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QCheckBox" name="channel_noise_checkbox">
+                   <property name="text">
+                    <string>Channel Noise</string>
+                   </property>
+                   <property name="checked">
+                    <bool>true</bool>
+                   </property>
+                  </widget>
+                 </item>
+                 <item>
+                  <widget class="QCheckBox" name="line_noise_checkbox">
+                   <property name="text">
+                    <string>Line Noise</string>
                    </property>
                    <property name="checked">
                     <bool>true</bool>
@@ -1060,8 +1079,7 @@ color: rgb(255, 255, 255);</string>
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>Exporting Format</string>
@@ -1141,8 +1159,7 @@ color: rgb(255, 255, 255);</string>
                 </font>
                </property>
                <property name="styleSheet">
-                <string notr="true">background-color: rgb(0, 0, 0);
-color: rgb(255, 255, 255);</string>
+                <string notr="true">color: white; background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #053062, stop:1 #80BBD7); border-radius: 8px; padding-left: 12px;</string>
                </property>
                <property name="text">
                 <string>Output Folder</string>
@@ -1271,6 +1288,32 @@ color: rgb(255, 255, 255);</string>
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QPushButton" name="step2_stop_process_data_button">
+         <property name="enabled">
+          <bool>true</bool>
+         </property>
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="font">
+          <font>
+           <pointsize>16</pointsize>
+           <weight>75</weight>
+           <bold>true</bold>
+          </font>
+         </property>
+         <property name="cursor">
+          <cursorShape>ForbiddenCursor</cursorShape>
+         </property>
+         <property name="text">
+          <string>Stop Processing</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </widget>
      <widget class="QSplitter" name="splitter">
@@ -1379,8 +1422,8 @@ color: rgb(255, 255, 255);</string>
  <resources/>
  <connections/>
  <buttongroups>
-  <buttongroup name="FindData_ButtonGroup"/>
   <buttongroup name="Montage_ButtonGroup"/>
+  <buttongroup name="FindData_ButtonGroup"/>
   <buttongroup name="LineNoise_ButtonGroup"/>
  </buttongroups>
 </ui>
